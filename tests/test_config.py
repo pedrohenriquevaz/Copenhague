@@ -12,6 +12,8 @@ def test_settings_from_env_uses_required_and_default_values() -> None:
     assert settings.GUILD_ID is None
     assert settings.ENVIRONMENT == "development"
     assert settings.LOG_LEVEL == "INFO"
+    assert settings.ENABLE_MEMBERS_INTENT is False
+    assert settings.ENABLE_MESSAGE_CONTENT_INTENT is False
 
 
 def test_settings_from_env_parses_optional_values() -> None:
@@ -21,12 +23,16 @@ def test_settings_from_env_parses_optional_values() -> None:
             "GUILD_ID": "123",
             "ENVIRONMENT": "production",
             "LOG_LEVEL": "debug",
+            "ENABLE_MEMBERS_INTENT": "true",
+            "ENABLE_MESSAGE_CONTENT_INTENT": "1",
         }
     )
 
     assert settings.GUILD_ID == 123
     assert settings.ENVIRONMENT == "production"
     assert settings.LOG_LEVEL == "DEBUG"
+    assert settings.ENABLE_MEMBERS_INTENT is True
+    assert settings.ENABLE_MESSAGE_CONTENT_INTENT is True
 
 
 def test_settings_from_env_requires_token() -> None:

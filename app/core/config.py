@@ -16,6 +16,8 @@ class Settings:
     GUILD_ID: int | None
     ENVIRONMENT: str
     LOG_LEVEL: str
+    ENABLE_MEMBERS_INTENT: bool
+    ENABLE_MESSAGE_CONTENT_INTENT: bool
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -33,9 +35,27 @@ class Settings:
             GUILD_ID=guild_id,
             ENVIRONMENT=env.get("ENVIRONMENT", "development"),
             LOG_LEVEL=env.get("LOG_LEVEL", "INFO").upper(),
+            ENABLE_MEMBERS_INTENT=_get_bool(env, "ENABLE_MEMBERS_INTENT", False),
+            ENABLE_MESSAGE_CONTENT_INTENT=_get_bool(
+                env,
+                "ENABLE_MESSAGE_CONTENT_INTENT",
+                False,
+            ),
         )
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings.from_env()
+
+
+def _get_bool(
+    environ: Mapping[str, str],
+    key: str,
+    default: bool,
+) -> bool:
+    value = environ.get(key)
+    if value is None:
+        return default
+
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}

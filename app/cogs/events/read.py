@@ -16,7 +16,7 @@ class ReadyEvents(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         logger.info("Bot conectado como %s (ID: %s)", self.bot.user, self.bot.user.id)
-        logger.info("Bot está pronto e operacional.")
+        logger.info("Bot esta pronto e operacional.")
 
 
 async def setup(bot: commands.Bot) -> None:

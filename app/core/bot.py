@@ -16,11 +16,12 @@ class DiscordBot(commands.Bot):
     """Classe principal do bot."""
 
     def __init__(self) -> None:
+        settings = get_settings()
         intents = discord.Intents.default()
         intents.guilds = True
-        intents.members = True
+        intents.members = settings.ENABLE_MEMBERS_INTENT
         intents.moderation = True
-        intents.message_content = False
+        intents.message_content = settings.ENABLE_MESSAGE_CONTENT_INTENT
 
         super().__init__(
             command_prefix="!",
@@ -88,5 +89,13 @@ class DiscordBot(commands.Bot):
                     "Slash Commands sincronizados globalmente: %s comando(s).",
                     len(synced),
                 )
+        except discord.Forbidden as exc:
+            logger.error(
+                "Nao foi possivel sincronizar Slash Commands no servidor %s: %s. "
+                "Verifique se GUILD_ID aponta para um servidor onde o bot esta "
+                "presente e se ele foi convidado com o escopo applications.commands.",
+                settings.GUILD_ID,
+                exc,
+            )
         except Exception as exc:
             logger.exception("Erro ao sincronizar Slash Commands: %s", exc)
