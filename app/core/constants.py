@@ -1,0 +1,1 @@
+"""Constantes compartilhadas do projeto."""
