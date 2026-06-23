@@ -4,6 +4,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -18,10 +19,11 @@ class Settings:
     LOG_LEVEL: str
     ENABLE_MEMBERS_INTENT: bool
     ENABLE_MESSAGE_CONTENT_INTENT: bool
+    GIVEAWAY_DB_PATH: str
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
-        env = environ or os.environ
+        env = os.environ if environ is None else environ
 
         token = env.get("DISCORD_TOKEN")
         if not token:
@@ -40,6 +42,10 @@ class Settings:
                 env,
                 "ENABLE_MESSAGE_CONTENT_INTENT",
                 False,
+            ),
+            GIVEAWAY_DB_PATH=env.get(
+                "GIVEAWAY_DB_PATH",
+                str(Path("data") / "giveaways.sqlite3"),
             ),
         )
 

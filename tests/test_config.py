@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.core.config import Settings
@@ -14,6 +16,7 @@ def test_settings_from_env_uses_required_and_default_values() -> None:
     assert settings.LOG_LEVEL == "INFO"
     assert settings.ENABLE_MEMBERS_INTENT is False
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is False
+    assert Path(settings.GIVEAWAY_DB_PATH) == Path("data/giveaways.sqlite3")
 
 
 def test_settings_from_env_parses_optional_values() -> None:
@@ -25,6 +28,7 @@ def test_settings_from_env_parses_optional_values() -> None:
             "LOG_LEVEL": "debug",
             "ENABLE_MEMBERS_INTENT": "true",
             "ENABLE_MESSAGE_CONTENT_INTENT": "1",
+            "GIVEAWAY_DB_PATH": "custom.sqlite3",
         }
     )
 
@@ -33,6 +37,7 @@ def test_settings_from_env_parses_optional_values() -> None:
     assert settings.LOG_LEVEL == "DEBUG"
     assert settings.ENABLE_MEMBERS_INTENT is True
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is True
+    assert settings.GIVEAWAY_DB_PATH == "custom.sqlite3"
 
 
 def test_settings_from_env_requires_token() -> None:

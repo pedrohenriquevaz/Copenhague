@@ -18,3 +18,7 @@ __pycache__/
 
 # Logs
 *.log
+
+# Banco local do giveaway
+data/
+*.sqlite3

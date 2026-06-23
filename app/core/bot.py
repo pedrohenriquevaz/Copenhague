@@ -8,6 +8,8 @@ from discord.ext import commands
 
 from app.core.config import get_settings
 from app.core.logger import setup_logging
+from app.repositories.giveaway_repository import SQLiteGiveawayRepository
+from app.services.giveaway_service import GiveawayService
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,10 @@ class DiscordBot(commands.Bot):
 
     def __init__(self) -> None:
         settings = get_settings()
+        self.settings = settings
+        self.giveaway_repository = SQLiteGiveawayRepository(settings.GIVEAWAY_DB_PATH)
+        self.giveaway_service = GiveawayService(self.giveaway_repository)
+
         intents = discord.Intents.default()
         intents.guilds = True
         intents.members = settings.ENABLE_MEMBERS_INTENT
