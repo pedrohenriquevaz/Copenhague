@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import cast
 
@@ -24,6 +25,7 @@ class GiveawayClaimView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
         self.event_id = event_id
+        self._refresh_task: asyncio.Task[None] | None = None
 
         self.claim_button = discord.ui.Button(
             label="Resgatar codigo",
@@ -34,12 +36,14 @@ class GiveawayClaimView(discord.ui.View):
         self.add_item(self.claim_button)
 
     async def _on_claim(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         service = cast(
             GiveawayService | None,
             getattr(self.bot, "giveaway_service", None),
         )
         if service is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "O sistema de giveaway nao esta disponivel agora.",
                 ephemeral=True,
             )
@@ -48,25 +52,25 @@ class GiveawayClaimView(discord.ui.View):
         result = await service.draw_code_for_user(self.event_id, interaction.user.id)
 
         if result.status is GiveawayDrawStatus.EVENT_NOT_FOUND:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Este evento nao foi encontrado.",
                 ephemeral=True,
             )
             return
 
         if result.status is GiveawayDrawStatus.EVENT_INACTIVE:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Este evento esta encerrado ou sem codigos disponiveis no momento.",
                 ephemeral=True,
             )
             return
 
         if result.status is GiveawayDrawStatus.SOLD_OUT:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Este evento acabou de ficar sem codigos disponiveis.",
                 ephemeral=True,
             )
-            await self._refresh_event_message(
+            self._schedule_event_message_refresh(
                 result.event.id if result.event else self.event_id
             )
             return
@@ -77,7 +81,7 @@ class GiveawayClaimView(discord.ui.View):
         ):
             claim = result.claim
             reward_text = format_reward_text(claim.reward_name, claim.reward_amount)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 (
                     "Voce ja participou deste evento.\n"
                     f"Seu codigo foi `{claim.code}` e a premiacao foi {reward_text}."
@@ -87,7 +91,7 @@ class GiveawayClaimView(discord.ui.View):
             return
 
         if result.code is None or result.claim is None or result.event is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Nao foi possivel concluir seu resgate agora.",
                 ephemeral=True,
             )
@@ -105,7 +109,7 @@ class GiveawayClaimView(discord.ui.View):
             won=won,
         )
 
-        await interaction.response.send_message(embed=claim_embed, ephemeral=True)
+        await interaction.followup.send(embed=claim_embed, ephemeral=True)
 
         if won:
             await self._notify_user(event, interaction.user, claim)
@@ -126,7 +130,7 @@ class GiveawayClaimView(discord.ui.View):
                 except discord.HTTPException:
                     logger.exception("Erro ao enviar anuncio publico do giveaway.")
 
-        await self._refresh_event_message(event.id)
+        self._schedule_event_message_refresh(event.id)
 
     async def _notify_user(
         self,
@@ -216,3 +220,17 @@ class GiveawayClaimView(discord.ui.View):
                 "Erro ao atualizar a mensagem publica do giveaway %s.",
                 event_id,
             )
+
+    def _schedule_event_message_refresh(self, event_id: int) -> None:
+        """Agrupa rajadas de cliques para evitar editar a mensagem a cada claim."""
+
+        if self._refresh_task is not None and not self._refresh_task.done():
+            return
+
+        self._refresh_task = asyncio.create_task(
+            self._delayed_refresh_event_message(event_id)
+        )
+
+    async def _delayed_refresh_event_message(self, event_id: int) -> None:
+        await asyncio.sleep(2)
+        await self._refresh_event_message(event_id)

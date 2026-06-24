@@ -100,6 +100,8 @@ class GiveawayCog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         try:
             result: GiveawayCreationResult = await self.service.create_event(
                 title=title,
@@ -110,7 +112,7 @@ class GiveawayCog(commands.Cog):
                 notify_user_id=notify_user.id if notify_user else None,
             )
         except GiveawayValidationError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.followup.send(str(exc), ephemeral=True)
             return
 
         event = result.event
@@ -127,7 +129,7 @@ class GiveawayCog(commands.Cog):
         notify_summary = (
             notify_user.mention if notify_user is not None else "Sem DM de notificacao"
         )
-        await interaction.response.send_message(
+        await interaction.followup.send(
             (
                 f"Evento criado com sucesso. ID: **{event.id}**\n"
                 f"Codigos totais: **{event.total_codes}**\n"
@@ -165,16 +167,18 @@ class GiveawayCog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         event = await self.service.get_event(event_id)
         if event is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Nao encontrei um evento com esse ID.",
                 ephemeral=True,
             )
             return
 
         if event.message_id is not None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Esse evento ja foi publicado anteriormente.",
                 ephemeral=True,
             )
@@ -182,21 +186,21 @@ class GiveawayCog(commands.Cog):
 
         target_channel = channel or interaction.channel
         if target_channel is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Nao foi possivel identificar o canal para publicar o evento.",
                 ephemeral=True,
             )
             return
 
         if not hasattr(target_channel, "send"):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "O canal escolhido nao suporta publicacao de mensagens.",
                 ephemeral=True,
             )
             return
 
         if duration_minutes is not None and duration_minutes <= 0:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "O tempo de publicacao precisa ser maior que zero.",
                 ephemeral=True,
             )
@@ -207,7 +211,7 @@ class GiveawayCog(commands.Cog):
             try:
                 parsed_color = parse_color_value(embed_color)
             except ValueError:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "A cor do embed precisa estar em hexadecimal valido.",
                     ephemeral=True,
                 )
@@ -215,7 +219,7 @@ class GiveawayCog(commands.Cog):
 
         stats = await self.service.get_event_stats(event.id)
         if stats is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Nao foi possivel carregar os dados do evento.",
                 ephemeral=True,
             )
@@ -237,13 +241,13 @@ class GiveawayCog(commands.Cog):
         try:
             message = await target_channel.send(embed=embed, view=view)
         except discord.Forbidden:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Nao tenho permissao para enviar mensagens nesse canal.",
                 ephemeral=True,
             )
             return
         except discord.HTTPException:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Ocorreu um erro ao publicar o evento.",
                 ephemeral=True,
             )
@@ -259,7 +263,7 @@ class GiveawayCog(commands.Cog):
         self.bot.add_view(view, message_id=message.id)
 
         channel_mention = getattr(target_channel, "mention", f"<#{target_channel.id}>")
-        await interaction.response.send_message(
+        await interaction.followup.send(
             (
                 f"Evento publicado em {channel_mention}.\n"
                 f"Link da mensagem: {message.jump_url}\n"
@@ -293,16 +297,18 @@ class GiveawayCog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         event = await self.service.get_event(event_id)
         if event is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Nao encontrei um evento com esse ID.",
                 ephemeral=True,
             )
             return
 
         await self._finalize_event(event, delete_original_message=delete_message)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Evento encerrado com sucesso.",
             ephemeral=True,
         )

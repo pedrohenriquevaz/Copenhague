@@ -585,6 +585,65 @@ class SQLiteGiveawayRepository:
                 ).fetchall()
         return [self._row_to_code(row) for row in rows]
 
+    def _list_remaining_rewarded_codes_sync(
+        self,
+        event_id: int,
+    ) -> list[GiveawayCode]:
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        id,
+                        event_id,
+                        code,
+                        reward_name,
+                        reward_amount,
+                        is_claimed,
+                        claimed_by,
+                        claimed_at
+                    FROM giveaway_codes
+                    WHERE event_id = ?
+                      AND is_claimed = 0
+                      AND (
+                          reward_name IS NOT NULL
+                          OR reward_amount IS NOT NULL
+                      )
+                    ORDER BY
+                        COALESCE(reward_amount, 0) DESC,
+                        code ASC
+                    """,
+                    (event_id,),
+                ).fetchall()
+        return [self._row_to_code(row) for row in rows]
+
+    def _list_winning_claims_sync(self, event_id: int) -> list[GiveawayClaim]:
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        c.id AS claim_id,
+                        c.event_id,
+                        c.user_id,
+                        c.code_id,
+                        c.claimed_at,
+                        c.reward_amount,
+                        c.reward_name,
+                        gc.code
+                    FROM giveaway_claims AS c
+                    INNER JOIN giveaway_codes AS gc ON gc.id = c.code_id
+                    WHERE c.event_id = ?
+                      AND (
+                          c.reward_name IS NOT NULL
+                          OR c.reward_amount IS NOT NULL
+                      )
+                    ORDER BY c.claimed_at ASC
+                    """,
+                    (event_id,),
+                ).fetchall()
+        return [self._row_to_claim(row) for row in rows]
+
     def _claim_next_available_code_sync(
         self,
         event_id: int,
@@ -784,7 +843,8 @@ class SQLiteGiveawayRepository:
                 )
 
     def _finalize_event_sync(self, event_id: int) -> GiveawayFinalizationResult:
-        remaining_codes = self._list_remaining_codes_sync(event_id)
+        remaining_codes = self._list_remaining_rewarded_codes_sync(event_id)
+        winning_claims = self._list_winning_claims_sync(event_id)
         event = self._set_event_active_sync(event_id, is_active=False)
         if event is None:
             raise RuntimeError("Nao foi possivel finalizar o evento.")
@@ -792,6 +852,7 @@ class SQLiteGiveawayRepository:
         return GiveawayFinalizationResult(
             event=event,
             remaining_codes=remaining_codes,
+            winning_claims=winning_claims,
         )
 
     @staticmethod

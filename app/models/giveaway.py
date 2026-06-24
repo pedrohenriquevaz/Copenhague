@@ -153,3 +153,4 @@ class GiveawayFinalizationResult:
 
     event: GiveawayEvent
     remaining_codes: list[GiveawayCode]
+    winning_claims: list[GiveawayClaim]

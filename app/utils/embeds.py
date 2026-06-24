@@ -148,20 +148,21 @@ def build_giveaway_claim_embed(
 def build_giveaway_final_embed(
     event: GiveawayEvent,
     remaining_codes: Iterable[GiveawayCode],
+    winner_lines: Iterable[str] | None = None,
 ) -> discord.Embed:
-    """Cria o embed de encerramento com os codigos restantes."""
+    """Cria o embed de encerramento com premios pendentes e ganhadores."""
 
     embed = discord.Embed(
         title=f"Evento encerrado: {event.title}",
-        description="O evento foi finalizado e os codigos restantes estao abaixo.",
+        description="O evento foi finalizado.",
         color=discord.Color.red(),
     )
 
     remaining_list = list(remaining_codes)
     if not remaining_list:
         embed.add_field(
-            name="Codigos restantes",
-            value="Nenhum codigo restou ao final do evento.",
+            name="Codigos premiados nao resgatados",
+            value="Nenhum codigo premiado ficou sem resgate.",
             inline=False,
         )
     else:
@@ -173,9 +174,45 @@ def build_giveaway_final_embed(
             for item in remaining_list
         ]
         embed.add_field(
-            name=f"Codigos restantes ({len(remaining_list)})",
-            value="\n".join(lines[:25]) + ("\n..." if len(lines) > 25 else ""),
+            name=f"Codigos premiados nao resgatados ({len(remaining_list)})",
+            value=_format_embed_lines(lines),
             inline=False,
         )
 
+    winners = list(winner_lines or [])
+    if not winners:
+        embed.add_field(
+            name="Ganhadores",
+            value="Nenhum codigo premiado foi resgatado.",
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name=f"Ganhadores ({len(winners)})",
+            value=_format_embed_lines(winners),
+            inline=False,
+        )
+
+    embed.set_footer(text=f"Evento #{event.id} encerrado")
     return embed
+
+
+def _format_embed_lines(lines: list[str], *, limit: int = 1024) -> str:
+    value = ""
+    shown = 0
+
+    for line in lines:
+        suffix = f"\n... e mais {len(lines) - shown}" if shown < len(lines) else ""
+        candidate = f"{value}\n{line}" if value else line
+        if len(candidate) + len(suffix) > limit:
+            break
+
+        value = candidate
+        shown += 1
+
+    if shown < len(lines):
+        remaining = len(lines) - shown
+        ellipsis = f"... e mais {remaining}"
+        value = f"{value}\n{ellipsis}" if value else ellipsis
+
+    return value or "-"
