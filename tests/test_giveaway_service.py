@@ -79,3 +79,52 @@ async def test_giveaway_service_creates_and_draws_codes() -> None:
             sidecar = Path(f"{db_path}{suffix}")
             if sidecar.exists():
                 sidecar.unlink()
+
+
+async def test_giveaway_extra_tickets_allow_additional_draws() -> None:
+    db_path = Path("tests") / "tmp_giveaway_tickets.sqlite3"
+    if db_path.exists():
+        db_path.unlink()
+
+    try:
+        repository = SQLiteGiveawayRepository(db_path)
+        service = GiveawayService(repository)
+
+        creation = await service.create_event(
+            title="Evento com tickets",
+            description="Descricao do evento",
+            created_by=123,
+            total_codes=3,
+        )
+        event = creation.event
+
+        first_draw = await service.draw_code_for_user(event.id, 10)
+        assert first_draw.status is GiveawayDrawStatus.SUCCESS
+
+        blocked_draw = await service.draw_code_for_user(event.id, 10)
+        assert blocked_draw.status is GiveawayDrawStatus.ALREADY_CLAIMED
+        assert blocked_draw.extra_tickets_remaining == 0
+
+        balance = await service.add_user_tickets(event.id, 10, 1)
+        assert balance.extra_tickets == 1
+
+        second_draw = await service.draw_code_for_user(event.id, 10)
+        assert second_draw.status is GiveawayDrawStatus.SUCCESS
+        assert second_draw.extra_tickets_remaining == 0
+        assert second_draw.claims_used == 2
+
+        balance = await service.get_user_ticket_balance(event.id, 10)
+        assert balance.extra_tickets == 0
+
+        blocked_again = await service.draw_code_for_user(event.id, 10)
+        assert blocked_again.status is GiveawayDrawStatus.ALREADY_CLAIMED
+    finally:
+        repository = None
+        service = None
+        gc.collect()
+        if db_path.exists():
+            db_path.unlink()
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{db_path}{suffix}")
+            if sidecar.exists():
+                sidecar.unlink()

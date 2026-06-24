@@ -83,8 +83,9 @@ class GiveawayClaimView(discord.ui.View):
             reward_text = format_reward_text(claim.reward_name, claim.reward_amount)
             await interaction.followup.send(
                 (
-                    "Voce ja participou deste evento.\n"
-                    f"Seu codigo foi `{claim.code}` e a premiacao foi {reward_text}."
+                    "Voce nao possui tickets extras restantes para este evento.\n"
+                    f"Seu ultimo codigo resgatado foi `{claim.code}` e a "
+                    f"premiacao foi {reward_text}."
                 ),
                 ephemeral=True,
             )

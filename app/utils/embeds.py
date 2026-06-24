@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 import discord
 
+from app.models.bolao import BolaoEvent, BolaoGuess
 from app.models.giveaway import GiveawayCode, GiveawayEvent, GiveawayEventStats
 
 
@@ -46,6 +47,72 @@ def parse_color_value(value: str | None) -> int | None:
     if parsed < 0 or parsed > 0xFFFFFF:
         raise ValueError("A cor precisa estar entre 000000 e FFFFFF.")
     return parsed
+
+
+def build_bolao_event_embed(
+    event: BolaoEvent,
+    *,
+    closed: bool = False,
+) -> discord.Embed:
+    """Cria o embed publico de um bolao."""
+
+    color = discord.Color.red() if closed or not event.is_active else discord.Color.blue()
+    embed = discord.Embed(
+        title=event.title,
+        description=event.description,
+        color=color,
+        timestamp=event.created_at,
+    )
+    embed.add_field(name="Jogo", value=f"{event.team_1} x {event.team_2}", inline=False)
+    embed.add_field(name="Premio", value=event.prize, inline=False)
+    embed.add_field(
+        name="Como participar",
+        value="Clique no botao abaixo e envie seu palpite de placar.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Responsavel",
+        value=f"<@{event.receiver_user_id}>",
+        inline=True,
+    )
+
+    if closed or not event.is_active:
+        embed.set_footer(text=f"Bolao #{event.id} encerrado")
+    else:
+        embed.set_footer(text=f"Bolao #{event.id}")
+    return embed
+
+
+def build_bolao_list_embed(events: list[BolaoEvent]) -> discord.Embed:
+    """Cria o embed com a lista de boloes ativos."""
+
+    embed = discord.Embed(
+        title="Boloes ativos",
+        color=discord.Color.blue(),
+    )
+
+    if not events:
+        embed.description = "Nao ha boloes ativos no momento."
+        return embed
+
+    lines = [
+        (
+            f"**#{event.id}** - {event.title}\n"
+            f"{event.team_1} x {event.team_2} | Premio: {event.prize}"
+        )
+        for event in events
+    ]
+    embed.description = _format_embed_lines(lines, limit=4000)
+    return embed
+
+
+def format_bolao_guess(event: BolaoEvent, guess: BolaoGuess) -> str:
+    """Formata um palpite com os nomes dos times."""
+
+    return (
+        f"{event.team_1} {guess.score_team_1} x "
+        f"{guess.score_team_2} {event.team_2}"
+    )
 
 
 def build_giveaway_event_embed(

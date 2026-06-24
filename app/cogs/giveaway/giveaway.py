@@ -313,6 +313,213 @@ class GiveawayCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(
+        name="give_ticket",
+        description="Adiciona tickets extras de resgate para um usuario.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        event_id="ID do evento do giveaway.",
+        user="Usuario que recebera tickets extras.",
+        amount="Quantidade de tickets extras a adicionar.",
+    )
+    async def give_ticket(
+        self,
+        interaction: discord.Interaction,
+        event_id: int,
+        user: discord.User,
+        amount: int = 1,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado dentro de um servidor.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            balance = await self.service.add_user_tickets(
+                event_id,
+                user.id,
+                amount,
+            )
+        except GiveawayValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            (
+                f"{amount} ticket(s) extra(s) adicionados para {user.mention}.\n"
+                f"Tickets extras restantes no evento **{event_id}**: "
+                f"**{balance.extra_tickets}**.\n"
+                f"Resgates disponiveis a partir de agora: "
+                f"**1 + {balance.extra_tickets} extra(s)**."
+            ),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="user_ticket",
+        description="Consulta os tickets extras restantes de um usuario.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        event_id="ID do evento do giveaway.",
+        user="Usuario consultado.",
+    )
+    async def user_ticket(
+        self,
+        interaction: discord.Interaction,
+        event_id: int,
+        user: discord.User,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado dentro de um servidor.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            balance = await self.service.get_user_ticket_balance(event_id, user.id)
+        except GiveawayValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            (
+                f"{user.mention} possui **{balance.extra_tickets}** "
+                f"ticket(s) extra(s) restante(s) no evento **{event_id}**.\n"
+                f"Por padrao, todo usuario tem 1 resgate gratuito por evento."
+            ),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="remove_ticket",
+        description="Remove tickets extras de resgate de um usuario.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        event_id="ID do evento do giveaway.",
+        user="Usuario que perdera tickets extras.",
+        amount="Quantidade de tickets extras a remover.",
+    )
+    async def remove_ticket(
+        self,
+        interaction: discord.Interaction,
+        event_id: int,
+        user: discord.User,
+        amount: int = 1,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado dentro de um servidor.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            balance = await self.service.remove_user_tickets(
+                event_id,
+                user.id,
+                amount,
+            )
+        except GiveawayValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            (
+                f"{amount} ticket(s) extra(s) removidos de {user.mention}.\n"
+                f"Tickets extras restantes no evento **{event_id}**: "
+                f"**{balance.extra_tickets}**."
+            ),
+            ephemeral=True,
+        )
+
+    @commands.command(name="give_ticket")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def give_ticket_prefix(
+        self,
+        ctx: commands.Context,
+        event_id: int,
+        user: discord.User,
+        amount: int = 1,
+    ) -> None:
+        """Adiciona tickets extras usando comando prefixado."""
+
+        async with ctx.typing():
+            balance = await self.service.add_user_tickets(event_id, user.id, amount)
+
+        await ctx.reply(
+            (
+                f"{amount} ticket(s) extra(s) adicionados para {user.mention}.\n"
+                f"Tickets extras restantes no evento **{event_id}**: "
+                f"**{balance.extra_tickets}**.\n"
+                f"Resgates disponiveis a partir de agora: "
+                f"**1 + {balance.extra_tickets} extra(s)**."
+            ),
+            mention_author=False,
+        )
+
+    @commands.command(name="user_ticket")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def user_ticket_prefix(
+        self,
+        ctx: commands.Context,
+        event_id: int,
+        user: discord.User,
+    ) -> None:
+        """Consulta tickets extras usando comando prefixado."""
+
+        async with ctx.typing():
+            balance = await self.service.get_user_ticket_balance(event_id, user.id)
+
+        await ctx.reply(
+            (
+                f"{user.mention} possui **{balance.extra_tickets}** "
+                f"ticket(s) extra(s) restante(s) no evento **{event_id}**.\n"
+                f"Por padrao, todo usuario tem 1 resgate gratuito por evento."
+            ),
+            mention_author=False,
+        )
+
+    @commands.command(name="remove_ticket")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def remove_ticket_prefix(
+        self,
+        ctx: commands.Context,
+        event_id: int,
+        user: discord.User,
+        amount: int = 1,
+    ) -> None:
+        """Remove tickets extras usando comando prefixado."""
+
+        async with ctx.typing():
+            balance = await self.service.remove_user_tickets(event_id, user.id, amount)
+
+        await ctx.reply(
+            (
+                f"{amount} ticket(s) extra(s) removidos de {user.mention}.\n"
+                f"Tickets extras restantes no evento **{event_id}**: "
+                f"**{balance.extra_tickets}**."
+            ),
+            mention_author=False,
+        )
+
     async def _finalize_event(
         self,
         event: GiveawayEvent,
@@ -451,6 +658,60 @@ class GiveawayCog(commands.Cog):
             await interaction.followup.send(message, ephemeral=True)
         else:
             await interaction.response.send_message(message, ephemeral=True)
+
+    async def cog_command_error(
+        self,
+        ctx: commands.Context,
+        error: commands.CommandError,
+    ) -> None:
+        if isinstance(error, GiveawayValidationError):
+            await ctx.reply(str(error), mention_author=False)
+            return
+
+        if isinstance(error, commands.CommandInvokeError) and isinstance(
+            error.original,
+            GiveawayValidationError,
+        ):
+            await ctx.reply(str(error.original), mention_author=False)
+            return
+
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.reply(
+                "Voce nao tem permissao para executar este comando.",
+                mention_author=False,
+            )
+            return
+
+        if isinstance(error, commands.NoPrivateMessage):
+            await ctx.reply(
+                "Este comando so pode ser usado dentro de um servidor.",
+                mention_author=False,
+            )
+            return
+
+        if isinstance(
+            error,
+            (
+                commands.BadArgument,
+                commands.MissingRequiredArgument,
+                commands.TooManyArguments,
+            ),
+        ):
+            await ctx.reply(
+                (
+                    "Uso: `cp!give_ticket <event_id> <usuario> [quantidade]`, "
+                    "`cp!user_ticket <event_id> <usuario>` ou "
+                    "`cp!remove_ticket <event_id> <usuario> [quantidade]`."
+                ),
+                mention_author=False,
+            )
+            return
+
+        logger.exception("Erro inesperado no comando prefixado de giveaway: %s", error)
+        await ctx.reply(
+            "Ocorreu um erro inesperado ao executar o giveaway.",
+            mention_author=False,
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -18,6 +18,7 @@ from app.models.giveaway import (
     GiveawayEventStats,
     GiveawayFinalizationResult,
     GiveawayRewardTier,
+    GiveawayTicketBalance,
     serialize_datetime,
     utc_now,
 )
@@ -195,6 +196,43 @@ class GiveawayService:
     ) -> GiveawayDrawResult:
         return await self._repository.claim_next_available_code(event_id, user_id)
 
+    async def get_user_ticket_balance(
+        self,
+        event_id: int,
+        user_id: int,
+    ) -> GiveawayTicketBalance:
+        event = await self.get_event(event_id)
+        if event is None:
+            raise GiveawayValidationError("Nao encontrei um evento com esse ID.")
+
+        return await self._repository.get_user_ticket_balance(event_id, user_id)
+
+    async def add_user_tickets(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int = 1,
+    ) -> GiveawayTicketBalance:
+        self._validate_ticket_amount(amount)
+        event = await self.get_event(event_id)
+        if event is None:
+            raise GiveawayValidationError("Nao encontrei um evento com esse ID.")
+
+        return await self._repository.add_user_tickets(event_id, user_id, amount)
+
+    async def remove_user_tickets(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int = 1,
+    ) -> GiveawayTicketBalance:
+        self._validate_ticket_amount(amount)
+        event = await self.get_event(event_id)
+        if event is None:
+            raise GiveawayValidationError("Nao encontrei um evento com esse ID.")
+
+        return await self._repository.remove_user_tickets(event_id, user_id, amount)
+
     async def list_active_published_events(self) -> list[GiveawayEvent]:
         return await self._repository.list_active_published_events()
 
@@ -346,6 +384,13 @@ class GiveawayService:
         if quantity <= 0:
             raise GiveawayValidationError(
                 "A quantidade de codigos premiados precisa ser maior que 0."
+            )
+
+    @staticmethod
+    def _validate_ticket_amount(amount: int) -> None:
+        if amount <= 0:
+            raise GiveawayValidationError(
+                "A quantidade de tickets precisa ser maior que zero."
             )
 
     @staticmethod

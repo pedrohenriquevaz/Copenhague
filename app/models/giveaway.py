@@ -136,6 +136,17 @@ class GiveawayDrawResult:
     event: GiveawayEvent | None = None
     code: GiveawayCode | None = None
     claim: GiveawayClaim | None = None
+    claims_used: int = 0
+    extra_tickets_remaining: int = 0
+
+
+@dataclass(slots=True)
+class GiveawayTicketBalance:
+    """Saldo de chances extras de um usuario em um evento."""
+
+    event_id: int
+    user_id: int
+    extra_tickets: int
 
 
 @dataclass(slots=True)

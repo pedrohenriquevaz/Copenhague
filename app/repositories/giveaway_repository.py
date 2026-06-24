@@ -18,6 +18,7 @@ from app.models.giveaway import (
     GiveawayEventCreate,
     GiveawayEventStats,
     GiveawayFinalizationResult,
+    GiveawayTicketBalance,
     parse_datetime,
     serialize_datetime,
     utc_now,
@@ -65,6 +66,26 @@ class GiveawayRepositoryProtocol(Protocol):
         event_id: int,
         user_id: int,
     ) -> GiveawayClaim | None: ...
+
+    async def get_user_ticket_balance(
+        self,
+        event_id: int,
+        user_id: int,
+    ) -> GiveawayTicketBalance: ...
+
+    async def add_user_tickets(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int,
+    ) -> GiveawayTicketBalance: ...
+
+    async def remove_user_tickets(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int,
+    ) -> GiveawayTicketBalance: ...
 
     async def claim_next_available_code(
         self,
@@ -151,6 +172,43 @@ class SQLiteGiveawayRepository:
     ) -> GiveawayClaim | None:
         return await asyncio.to_thread(self._get_user_claim_sync, event_id, user_id)
 
+    async def get_user_ticket_balance(
+        self,
+        event_id: int,
+        user_id: int,
+    ) -> GiveawayTicketBalance:
+        return await asyncio.to_thread(
+            self._get_user_ticket_balance_sync,
+            event_id,
+            user_id,
+        )
+
+    async def add_user_tickets(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int,
+    ) -> GiveawayTicketBalance:
+        return await asyncio.to_thread(
+            self._add_user_tickets_sync,
+            event_id,
+            user_id,
+            amount,
+        )
+
+    async def remove_user_tickets(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int,
+    ) -> GiveawayTicketBalance:
+        return await asyncio.to_thread(
+            self._remove_user_tickets_sync,
+            event_id,
+            user_id,
+            amount,
+        )
+
     async def claim_next_available_code(
         self,
         event_id: int,
@@ -234,6 +292,18 @@ class SQLiteGiveawayRepository:
                         UNIQUE(event_id, user_id)
                     )
                     """)
+                self._ensure_claims_allow_multiple_per_user(connection)
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS giveaway_user_tickets (
+                        event_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        extra_tickets INTEGER NOT NULL DEFAULT 0,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY(event_id, user_id),
+                        FOREIGN KEY(event_id) REFERENCES giveaway_events(id)
+                            ON DELETE CASCADE
+                    )
+                    """)
                 self._ensure_column(
                     connection, "giveaway_events", "notify_user_id", "INTEGER"
                 )
@@ -248,6 +318,10 @@ class SQLiteGiveawayRepository:
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_giveaway_claims_event_user
                     ON giveaway_claims(event_id, user_id)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_giveaway_tickets_event_user
+                    ON giveaway_user_tickets(event_id, user_id)
                     """)
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_giveaway_events_expires_at
@@ -266,6 +340,65 @@ class SQLiteGiveawayRepository:
             return
 
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _ensure_claims_allow_multiple_per_user(
+        connection: sqlite3.Connection,
+    ) -> None:
+        indexes = connection.execute("PRAGMA index_list(giveaway_claims)").fetchall()
+        has_user_unique = False
+        for index in indexes:
+            if not bool(index["unique"]):
+                continue
+
+            columns = connection.execute(
+                f"PRAGMA index_info({index['name']})"
+            ).fetchall()
+            column_names = [str(column["name"]) for column in columns]
+            if column_names == ["event_id", "user_id"]:
+                has_user_unique = True
+                break
+
+        if not has_user_unique:
+            return
+
+        connection.execute("ALTER TABLE giveaway_claims RENAME TO giveaway_claims_old")
+        connection.execute("""
+            CREATE TABLE giveaway_claims (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                code_id INTEGER NOT NULL UNIQUE,
+                claimed_at TEXT NOT NULL,
+                reward_amount INTEGER,
+                reward_name TEXT,
+                FOREIGN KEY(event_id) REFERENCES giveaway_events(id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY(code_id) REFERENCES giveaway_codes(id)
+                    ON DELETE CASCADE
+            )
+            """)
+        connection.execute("""
+            INSERT INTO giveaway_claims (
+                id,
+                event_id,
+                user_id,
+                code_id,
+                claimed_at,
+                reward_amount,
+                reward_name
+            )
+            SELECT
+                id,
+                event_id,
+                user_id,
+                code_id,
+                claimed_at,
+                reward_amount,
+                reward_name
+            FROM giveaway_claims_old
+            """)
+        connection.execute("DROP TABLE giveaway_claims_old")
 
     def _create_event_sync(
         self,
@@ -556,10 +689,109 @@ class SQLiteGiveawayRepository:
                     FROM giveaway_claims AS c
                     INNER JOIN giveaway_codes AS gc ON gc.id = c.code_id
                     WHERE c.event_id = ? AND c.user_id = ?
+                    ORDER BY c.claimed_at DESC, c.id DESC
+                    LIMIT 1
                     """,
                     (event_id, user_id),
                 ).fetchone()
         return self._row_to_claim(row) if row else None
+
+    def _get_user_ticket_balance_sync(
+        self,
+        event_id: int,
+        user_id: int,
+    ) -> GiveawayTicketBalance:
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT extra_tickets
+                    FROM giveaway_user_tickets
+                    WHERE event_id = ? AND user_id = ?
+                    """,
+                    (event_id, user_id),
+                ).fetchone()
+
+        return GiveawayTicketBalance(
+            event_id=event_id,
+            user_id=user_id,
+            extra_tickets=int(row["extra_tickets"]) if row else 0,
+        )
+
+    def _add_user_tickets_sync(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int,
+    ) -> GiveawayTicketBalance:
+        updated_at = serialize_datetime(utc_now())
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                if self._get_event_row(connection, event_id) is None:
+                    connection.rollback()
+                    raise RuntimeError("Evento nao encontrado.")
+
+                connection.execute(
+                    """
+                    INSERT INTO giveaway_user_tickets (
+                        event_id,
+                        user_id,
+                        extra_tickets,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(event_id, user_id) DO UPDATE SET
+                        extra_tickets = extra_tickets + excluded.extra_tickets,
+                        updated_at = excluded.updated_at
+                    """,
+                    (event_id, user_id, amount, updated_at),
+                )
+                connection.commit()
+
+        return self._get_user_ticket_balance_sync(event_id, user_id)
+
+    def _remove_user_tickets_sync(
+        self,
+        event_id: int,
+        user_id: int,
+        amount: int,
+    ) -> GiveawayTicketBalance:
+        updated_at = serialize_datetime(utc_now())
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                if self._get_event_row(connection, event_id) is None:
+                    connection.rollback()
+                    raise RuntimeError("Evento nao encontrado.")
+
+                current = connection.execute(
+                    """
+                    SELECT extra_tickets
+                    FROM giveaway_user_tickets
+                    WHERE event_id = ? AND user_id = ?
+                    """,
+                    (event_id, user_id),
+                ).fetchone()
+                current_tickets = int(current["extra_tickets"]) if current else 0
+                next_tickets = max(0, current_tickets - amount)
+
+                connection.execute(
+                    """
+                    INSERT INTO giveaway_user_tickets (
+                        event_id,
+                        user_id,
+                        extra_tickets,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(event_id, user_id) DO UPDATE SET
+                        extra_tickets = excluded.extra_tickets,
+                        updated_at = excluded.updated_at
+                    """,
+                    (event_id, user_id, next_tickets, updated_at),
+                )
+                connection.commit()
+
+        return self._get_user_ticket_balance_sync(event_id, user_id)
 
     def _list_remaining_codes_sync(self, event_id: int) -> list[GiveawayCode]:
         with self._lock:
@@ -644,6 +876,33 @@ class SQLiteGiveawayRepository:
                 ).fetchall()
         return [self._row_to_claim(row) for row in rows]
 
+    @staticmethod
+    def _get_event_row(
+        connection: sqlite3.Connection,
+        event_id: int,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT
+                id,
+                title,
+                description,
+                channel_id,
+                message_id,
+                created_by,
+                created_at,
+                is_active,
+                max_redemptions,
+                total_codes,
+                notify_user_id,
+                embed_color,
+                expires_at
+            FROM giveaway_events
+            WHERE id = ?
+            """,
+            (event_id,),
+        ).fetchone()
+
     def _claim_next_available_code_sync(
         self,
         event_id: int,
@@ -653,27 +912,7 @@ class SQLiteGiveawayRepository:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
 
-                event_row = connection.execute(
-                    """
-                    SELECT
-                        id,
-                        title,
-                        description,
-                        channel_id,
-                        message_id,
-                        created_by,
-                        created_at,
-                        is_active,
-                        max_redemptions,
-                        total_codes,
-                        notify_user_id,
-                        embed_color,
-                        expires_at
-                    FROM giveaway_events
-                    WHERE id = ?
-                    """,
-                    (event_id,),
-                ).fetchone()
+                event_row = self._get_event_row(connection, event_id)
                 if event_row is None:
                     connection.rollback()
                     return GiveawayDrawResult(
@@ -682,7 +921,27 @@ class SQLiteGiveawayRepository:
 
                 event = self._row_to_event(event_row)
 
-                claim_row = connection.execute(
+                claims_row = connection.execute(
+                    """
+                    SELECT COUNT(*) AS claims_used
+                    FROM giveaway_claims
+                    WHERE event_id = ? AND user_id = ?
+                    """,
+                    (event_id, user_id),
+                ).fetchone()
+                claims_used = int(claims_row["claims_used"] or 0)
+
+                tickets_row = connection.execute(
+                    """
+                    SELECT extra_tickets
+                    FROM giveaway_user_tickets
+                    WHERE event_id = ? AND user_id = ?
+                    """,
+                    (event_id, user_id),
+                ).fetchone()
+                extra_tickets = int(tickets_row["extra_tickets"]) if tickets_row else 0
+
+                latest_claim_row = connection.execute(
                     """
                     SELECT
                         c.id AS claim_id,
@@ -696,15 +955,23 @@ class SQLiteGiveawayRepository:
                     FROM giveaway_claims AS c
                     INNER JOIN giveaway_codes AS gc ON gc.id = c.code_id
                     WHERE c.event_id = ? AND c.user_id = ?
+                    ORDER BY c.claimed_at DESC, c.id DESC
+                    LIMIT 1
                     """,
                     (event_id, user_id),
                 ).fetchone()
-                if claim_row is not None:
+                if claims_used > 0 and extra_tickets <= 0:
                     connection.rollback()
                     return GiveawayDrawResult(
                         status=GiveawayDrawStatus.ALREADY_CLAIMED,
                         event=event,
-                        claim=self._row_to_claim(claim_row),
+                        claim=(
+                            self._row_to_claim(latest_claim_row)
+                            if latest_claim_row
+                            else None
+                        ),
+                        claims_used=claims_used,
+                        extra_tickets_remaining=extra_tickets,
                     )
 
                 if not event.is_active:
@@ -712,6 +979,8 @@ class SQLiteGiveawayRepository:
                     return GiveawayDrawResult(
                         status=GiveawayDrawStatus.EVENT_INACTIVE,
                         event=event,
+                        claims_used=claims_used,
+                        extra_tickets_remaining=extra_tickets,
                     )
 
                 if event.expires_at is not None and event.expires_at <= utc_now():
@@ -727,6 +996,8 @@ class SQLiteGiveawayRepository:
                     return GiveawayDrawResult(
                         status=GiveawayDrawStatus.EVENT_INACTIVE,
                         event=replace(event, is_active=False),
+                        claims_used=claims_used,
+                        extra_tickets_remaining=extra_tickets,
                     )
 
                 code_row = connection.execute(
@@ -760,6 +1031,8 @@ class SQLiteGiveawayRepository:
                     return GiveawayDrawResult(
                         status=GiveawayDrawStatus.SOLD_OUT,
                         event=replace(event, is_active=False),
+                        claims_used=claims_used,
+                        extra_tickets_remaining=extra_tickets,
                     )
 
                 claimed_at = serialize_datetime(utc_now())
@@ -796,6 +1069,24 @@ class SQLiteGiveawayRepository:
                         code.reward_name,
                     ),
                 )
+
+                extra_tickets_remaining = extra_tickets
+                if claims_used > 0:
+                    extra_tickets_remaining = max(0, extra_tickets - 1)
+                    connection.execute(
+                        """
+                        UPDATE giveaway_user_tickets
+                        SET extra_tickets = ?,
+                            updated_at = ?
+                        WHERE event_id = ? AND user_id = ?
+                        """,
+                        (
+                            extra_tickets_remaining,
+                            claimed_at,
+                            event_id,
+                            user_id,
+                        ),
+                    )
 
                 remaining = connection.execute(
                     """
@@ -840,6 +1131,8 @@ class SQLiteGiveawayRepository:
                     event=event,
                     code=code,
                     claim=claim,
+                    claims_used=claims_used + 1,
+                    extra_tickets_remaining=extra_tickets_remaining,
                 )
 
     def _finalize_event_sync(self, event_id: int) -> GiveawayFinalizationResult:

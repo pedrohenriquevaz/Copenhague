@@ -20,6 +20,7 @@ class Settings:
     ENABLE_MEMBERS_INTENT: bool
     ENABLE_MESSAGE_CONTENT_INTENT: bool
     GIVEAWAY_DB_PATH: str
+    BOLAO_DB_PATH: str
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -46,6 +47,10 @@ class Settings:
             GIVEAWAY_DB_PATH=env.get(
                 "GIVEAWAY_DB_PATH",
                 str(Path("data") / "giveaways.sqlite3"),
+            ),
+            BOLAO_DB_PATH=env.get(
+                "BOLAO_DB_PATH",
+                str(Path("data") / "bot.db"),
             ),
         )
 

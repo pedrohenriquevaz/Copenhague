@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from .bolao import (
+    BolaoEvent,
+    BolaoEventCreate,
+    BolaoGuess,
+    BolaoGuessResult,
+    BolaoGuessStatus,
+)
 from .giveaway import (
     GiveawayClaim,
     GiveawayCode,
@@ -18,6 +25,11 @@ from .giveaway import (
 )
 
 __all__ = [
+    "BolaoEvent",
+    "BolaoEventCreate",
+    "BolaoGuess",
+    "BolaoGuessResult",
+    "BolaoGuessStatus",
     "GiveawayClaim",
     "GiveawayCode",
     "GiveawayCodeSeed",
