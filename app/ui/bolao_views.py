@@ -49,4 +49,11 @@ class BolaoGuessView(discord.ui.View):
             )
             return
 
-        await interaction.response.send_modal(BolaoGuessModal(self.bot, self.bolao_id))
+        await interaction.response.send_modal(
+            BolaoGuessModal(
+                self.bot,
+                self.bolao_id,
+                team_1=event.team_1,
+                team_2=event.team_2,
+            )
+        )

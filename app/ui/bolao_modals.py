@@ -16,23 +16,33 @@ logger = logging.getLogger(__name__)
 class BolaoGuessModal(discord.ui.Modal):
     """Modal usado para coletar o placar do participante."""
 
-    score_team_1 = discord.ui.TextInput(
-        label="Gols do time 1",
-        placeholder="Ex: 2",
-        min_length=1,
-        max_length=2,
-    )
-    score_team_2 = discord.ui.TextInput(
-        label="Gols do time 2",
-        placeholder="Ex: 1",
-        min_length=1,
-        max_length=2,
-    )
-
-    def __init__(self, bot: commands.Bot, bolao_id: int) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        bolao_id: int,
+        *,
+        team_1: str,
+        team_2: str,
+    ) -> None:
         super().__init__(title="Enviar palpite")
         self.bot = bot
         self.bolao_id = bolao_id
+        self.team_1 = team_1
+        self.team_2 = team_2
+        self.score_team_1 = discord.ui.TextInput(
+            label=f"Gols do {team_1}"[:45],
+            placeholder="Ex: 2",
+            min_length=1,
+            max_length=2,
+        )
+        self.score_team_2 = discord.ui.TextInput(
+            label=f"Gols do {team_2}"[:45],
+            placeholder="Ex: 1",
+            min_length=1,
+            max_length=2,
+        )
+        self.add_item(self.score_team_1)
+        self.add_item(self.score_team_2)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         service = cast(BolaoService | None, getattr(self.bot, "bolao_service", None))
@@ -44,8 +54,8 @@ class BolaoGuessModal(discord.ui.Modal):
             return
 
         try:
-            score_team_1 = self._parse_score(str(self.score_team_1.value), "time 1")
-            score_team_2 = self._parse_score(str(self.score_team_2.value), "time 2")
+            score_team_1 = self._parse_score(str(self.score_team_1.value), self.team_1)
+            score_team_2 = self._parse_score(str(self.score_team_2.value), self.team_2)
         except BolaoValidationError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return

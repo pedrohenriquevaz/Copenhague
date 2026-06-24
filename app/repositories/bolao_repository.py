@@ -45,6 +45,13 @@ class BolaoRepositoryProtocol(Protocol):
         score_team_2: int,
     ) -> BolaoGuessResult: ...
 
+    async def list_winning_guesses(
+        self,
+        bolao_id: int,
+        score_team_1: int,
+        score_team_2: int,
+    ) -> list[BolaoGuess]: ...
+
 
 class SQLiteBolaoRepository:
     """Persistencia SQLite para boloes e palpites."""
@@ -95,6 +102,19 @@ class SQLiteBolaoRepository:
             self._create_guess_sync,
             bolao_id,
             user_id,
+            score_team_1,
+            score_team_2,
+        )
+
+    async def list_winning_guesses(
+        self,
+        bolao_id: int,
+        score_team_1: int,
+        score_team_2: int,
+    ) -> list[BolaoGuess]:
+        return await asyncio.to_thread(
+            self._list_winning_guesses_sync,
+            bolao_id,
             score_team_1,
             score_team_2,
         )
@@ -352,6 +372,34 @@ class SQLiteBolaoRepository:
             event=event,
             guess=guess,
         )
+
+    def _list_winning_guesses_sync(
+        self,
+        bolao_id: int,
+        score_team_1: int,
+        score_team_2: int,
+    ) -> list[BolaoGuess]:
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        id,
+                        bolao_id,
+                        user_id,
+                        score_team_1,
+                        score_team_2,
+                        created_at
+                    FROM bolao_guesses
+                    WHERE bolao_id = ?
+                      AND score_team_1 = ?
+                      AND score_team_2 = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (bolao_id, score_team_1, score_team_2),
+                ).fetchall()
+
+        return [self._row_to_guess(row) for row in rows]
 
     @staticmethod
     def _get_event_row(

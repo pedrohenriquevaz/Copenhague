@@ -50,6 +50,12 @@ async def test_bolao_service_creates_publishes_and_registers_guess() -> None:
         assert duplicate.guess is not None
         assert duplicate.guess.score_team_1 == 2
         assert duplicate.guess.score_team_2 == 1
+
+        other_result = await service.create_guess(event.id, 31, 0, 0)
+        assert other_result.status is BolaoGuessStatus.SUCCESS
+
+        winners = await service.list_winning_guesses(event.id, 2, 1)
+        assert [winner.user_id for winner in winners] == [30]
     finally:
         repository = None
         service = None

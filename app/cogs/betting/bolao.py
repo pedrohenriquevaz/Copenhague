@@ -10,7 +10,10 @@ from discord.ext import commands
 from app.models.bolao import BolaoEvent
 from app.services.bolao_service import BolaoService, BolaoValidationError
 from app.ui.bolao_views import BolaoGuessView
-from app.utils.embeds import build_bolao_event_embed, build_bolao_list_embed
+from app.utils.embeds import (
+    build_bolao_event_embed,
+    build_bolao_list_embed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,12 +142,16 @@ class BolaoCog(commands.Cog):
     @app_commands.describe(
         bolao_id="ID do bolao a encerrar.",
         message_id="ID da mensagem publicada do bolao.",
+        placar_time_1="Gols feitos pelo time 1 no resultado final.",
+        placar_time_2="Gols feitos pelo time 2 no resultado final.",
     )
     async def bolao_close(
         self,
         interaction: discord.Interaction,
         bolao_id: str | None = None,
         message_id: str | None = None,
+        placar_time_1: int | None = None,
+        placar_time_2: int | None = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -157,6 +164,15 @@ class BolaoCog(commands.Cog):
 
         try:
             event = await self._resolve_event(bolao_id, message_id)
+            if placar_time_1 is None or placar_time_2 is None:
+                raise BolaoValidationError(
+                    "Informe o placar final para calcular os vencedores."
+                )
+            winners = await self.service.list_winning_guesses(
+                event.id,
+                placar_time_1,
+                placar_time_2,
+            )
             closed_event = await self.service.close_event(event.id)
         except BolaoValidationError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
@@ -164,8 +180,15 @@ class BolaoCog(commands.Cog):
 
         await self._disable_public_message(closed_event)
         await interaction.followup.send(
-            f"Bolao **#{closed_event.id}** encerrado com sucesso.",
+            f"Palpites da Copa **#{closed_event.id}** encerrado com sucesso.",
             ephemeral=True,
+        )
+        await self._send_winners_summary(
+            interaction,
+            closed_event,
+            placar_time_1,
+            placar_time_2,
+            winners,
         )
 
     @app_commands.command(
@@ -256,6 +279,63 @@ class BolaoCog(commands.Cog):
         except discord.HTTPException:
             logger.exception("Erro ao editar mensagem publica do bolao %s.", event.id)
 
+    async def _send_winners_summary(
+        self,
+        interaction: discord.Interaction,
+        event: BolaoEvent,
+        score_team_1: int,
+        score_team_2: int,
+        winners,
+    ) -> None:
+        channel = interaction.channel
+        if channel is None or not hasattr(channel, "send"):
+            return
+
+        final_score = (
+            f"{event.team_1} {score_team_1} x {score_team_2} {event.team_2}"
+        )
+        if not winners:
+            message = (
+                f"Bolão **#{event.id} - {event.title}** encerrado.\n"
+                f"Resultado final: **{final_score}**\n"
+                "Ninguém acertou o placar exato."
+            )
+        else:
+            winner_lines = [
+                f"{index}. <@{guess.user_id}> (`{guess.user_id}`)"
+                for index, guess in enumerate(winners, start=1)
+            ]
+            message = (
+                f"Bolão **#{event.id} - {event.title}** encerrado.\n"
+                f"Resultado final: **{final_score}**\n"
+                f"Vencedores ({len(winners)}):\n"
+                + "\n".join(winner_lines)
+            )
+
+        try:
+            for chunk in self._chunk_text(message, limit=1900):
+                await channel.send(chunk)
+        except discord.HTTPException:
+            logger.exception("Erro ao publicar os vencedores do bolão %s.", event.id)
+
+    @staticmethod
+    def _chunk_text(text: str, *, limit: int) -> list[str]:
+        chunks: list[str] = []
+        current = ""
+
+        for line in text.splitlines():
+            candidate = f"{current}\n{line}" if current else line
+            if len(candidate) > limit and current:
+                chunks.append(current)
+                current = line
+                continue
+            current = candidate
+
+        if current:
+            chunks.append(current)
+
+        return chunks
+
     async def cog_app_command_error(
         self,
         interaction: discord.Interaction,
@@ -277,15 +357,15 @@ class BolaoCog(commands.Cog):
             error,
             (app_commands.MissingPermissions, app_commands.CheckFailure),
         ):
-            message = "Voce nao tem permissao para executar este comando."
+            message = "Voce não tem permissao para executar este comando."
             if interaction.response.is_done():
                 await interaction.followup.send(message, ephemeral=True)
             else:
                 await interaction.response.send_message(message, ephemeral=True)
             return
 
-        logger.exception("Erro inesperado no bolao: %s", error)
-        message = "Ocorreu um erro inesperado ao executar o bolao."
+        logger.exception("Erro inesperado no bolão: %s", error)
+        message = "Ocorreu um erro inesperado ao executar o bolão."
         if interaction.response.is_done():
             await interaction.followup.send(message, ephemeral=True)
         else:

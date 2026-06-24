@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.models.bolao import (
     BolaoEvent,
     BolaoEventCreate,
+    BolaoGuess,
     BolaoGuessResult,
 )
 from app.models.giveaway import utc_now
@@ -99,6 +100,24 @@ class BolaoService:
         return await self._repository.create_guess(
             bolao_id,
             user_id,
+            score_team_1,
+            score_team_2,
+        )
+
+    async def list_winning_guesses(
+        self,
+        bolao_id: int,
+        score_team_1: int,
+        score_team_2: int,
+    ) -> list[BolaoGuess]:
+        self.validate_score(score_team_1)
+        self.validate_score(score_team_2)
+        event = await self.get_event(bolao_id)
+        if event is None:
+            raise BolaoValidationError("Nao encontrei um bolao com esse ID.")
+
+        return await self._repository.list_winning_guesses(
+            bolao_id,
             score_team_1,
             score_team_2,
         )
