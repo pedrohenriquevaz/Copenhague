@@ -37,6 +37,8 @@ GUILD_ID=id-do-servidor-de-testes
 ENVIRONMENT=development
 LOG_LEVEL=INFO
 GIVEAWAY_DB_PATH=data/giveaways.sqlite3
+BOLAO_DB_PATH=data/bot.db
+FORM_DB_PATH=data/bot.db
 ENABLE_MEMBERS_INTENT=false
 ENABLE_MESSAGE_CONTENT_INTENT=false
 ```
@@ -106,6 +108,34 @@ Fluxo:
 3. O usuario clica no botao para receber um codigo
 4. O bot registra o resgate e anuncia publicamente se houver premio
 5. Ao encerrar, o bot publica um resumo com os codigos restantes e o valor de cada um
+
+## Formularios
+
+Comandos administrativos disponiveis:
+
+- `/form_create`
+- `/form_close`
+- `/form_list`
+
+`/form_create` publica um embed no canal atual e envia cada resposta para o
+`canal_respostas` escolhido.
+
+Formato aceito para `perguntas`:
+
+```text
+curta|Qual seu nome?;
+combo|Cargo desejado|Moderador,Suporte,Eventos;
+multipla|Horarios disponiveis|Manha,Tarde,Noite
+```
+
+Tipos aceitos:
+
+- `curta`: resposta curta em modal.
+- `combo`: selecao unica.
+- `multipla`: selecao com uma ou mais opcoes.
+
+Limites atuais: ate 5 perguntas curtas, ate 4 perguntas de selecao e ate 25
+opcoes por pergunta de selecao.
 
 ## Docker
 

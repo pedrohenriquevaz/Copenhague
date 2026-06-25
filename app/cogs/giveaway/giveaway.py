@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from app.models.giveaway import (
+    GiveawayClaim,
     GiveawayCode,
     GiveawayCreationResult,
     GiveawayEvent,
@@ -585,6 +586,7 @@ class GiveawayCog(commands.Cog):
         final_embed = build_giveaway_final_embed(
             finalization.event,
             finalization.remaining_codes,
+            self._format_winner_lines(finalization.winning_claims),
         )
         summary_message = None
         if hasattr(channel, "send"):
@@ -683,6 +685,17 @@ class GiveawayCog(commands.Cog):
         return [
             f"{item.code} - {format_reward_text(item.reward_name, item.reward_amount)}"
             for item in codes
+        ]
+
+    @staticmethod
+    def _format_winner_lines(claims: list[GiveawayClaim]) -> list[str]:
+        return [
+            (
+                f"{index}. <@{claim.user_id}> (`{claim.user_id}`) - "
+                f"`{claim.code}` - "
+                f"{format_reward_text(claim.reward_name, claim.reward_amount)}"
+            )
+            for index, claim in enumerate(claims, start=1)
         ]
 
     async def cog_app_command_error(

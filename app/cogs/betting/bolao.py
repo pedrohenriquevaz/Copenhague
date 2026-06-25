@@ -224,7 +224,9 @@ class BolaoCog(commands.Cog):
             try:
                 parsed_bolao_id = int(bolao_id)
             except ValueError as exc:
-                raise BolaoValidationError("O ID do bolao precisa ser numerico.") from exc
+                raise BolaoValidationError(
+                    "O ID do bolao precisa ser numerico."
+                ) from exc
 
             event = await self.service.get_event(parsed_bolao_id)
             if event is None:
@@ -235,7 +237,9 @@ class BolaoCog(commands.Cog):
         try:
             parsed_message_id = int(message_id)
         except ValueError as exc:
-            raise BolaoValidationError("O ID da mensagem precisa ser numerico.") from exc
+            raise BolaoValidationError(
+                "O ID da mensagem precisa ser numerico."
+            ) from exc
 
         event = await self.service.get_event_by_message_id(parsed_message_id)
         if event is None:

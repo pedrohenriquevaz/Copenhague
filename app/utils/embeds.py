@@ -5,6 +5,7 @@ from collections.abc import Iterable
 import discord
 
 from app.models.bolao import BolaoEvent, BolaoGuess
+from app.models.form import FormDefinition, FormQuestionType, FormResponse
 from app.models.giveaway import GiveawayCode, GiveawayEvent, GiveawayEventStats
 
 
@@ -56,7 +57,11 @@ def build_bolao_event_embed(
 ) -> discord.Embed:
     """Cria o embed publico de um bolao."""
 
-    color = discord.Color.red() if closed or not event.is_active else discord.Color.blue()
+    color = (
+        discord.Color.red()
+        if closed or not event.is_active
+        else discord.Color.blue()
+    )
     embed = discord.Embed(
         title=event.title,
         description=event.description,
@@ -113,6 +118,115 @@ def format_bolao_guess(event: BolaoEvent, guess: BolaoGuess) -> str:
         f"{event.team_1} {guess.score_team_1} x "
         f"{guess.score_team_2} {event.team_2}"
     )
+
+
+def build_form_embed(
+    form: FormDefinition,
+    *,
+    closed: bool = False,
+) -> discord.Embed:
+    """Cria o embed publico de um formulario."""
+
+    embed = discord.Embed(
+        title=form.title,
+        description=form.description,
+        color=(
+            discord.Color.red()
+            if closed or not form.is_active
+            else discord.Color.teal()
+        ),
+        timestamp=form.created_at,
+    )
+    embed.add_field(
+        name="Como responder",
+        value="Clique no botao abaixo para preencher o formulario.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Perguntas",
+        value=_format_embed_lines(
+            [
+                (
+                    f"{index}. {question.label} "
+                    f"({_format_form_question_type(question.type)})"
+                )
+                for index, question in enumerate(form.questions, start=1)
+            ],
+            limit=1024,
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Respostas",
+        value=f"<#{form.response_channel_id}>",
+        inline=True,
+    )
+    embed.set_footer(
+        text=(
+            f"Formulario #{form.id} encerrado"
+            if closed or not form.is_active
+            else f"Formulario #{form.id}"
+        )
+    )
+    return embed
+
+
+def build_form_list_embed(forms: list[FormDefinition]) -> discord.Embed:
+    """Cria o embed com formularios ativos."""
+
+    embed = discord.Embed(
+        title="Formularios ativos",
+        color=discord.Color.teal(),
+    )
+
+    if not forms:
+        embed.description = "Nao ha formularios ativos no momento."
+        return embed
+
+    embed.description = _format_embed_lines(
+        [
+            (
+                f"**#{form.id}** - {form.title}\n"
+                f"Respostas: <#{form.response_channel_id}> | "
+                f"Perguntas: {len(form.questions)}"
+            )
+            for form in forms
+        ],
+        limit=4000,
+    )
+    return embed
+
+
+def build_form_response_embed(
+    form: FormDefinition,
+    response: FormResponse,
+) -> discord.Embed:
+    """Cria o embed enviado ao canal de respostas."""
+
+    embed = discord.Embed(
+        title=f"Resposta: {form.title}",
+        color=discord.Color.teal(),
+        timestamp=response.created_at,
+    )
+    embed.set_footer(text=f"Formulario #{form.id} | Resposta #{response.id}")
+
+    for question in form.questions:
+        answer = response.answers.get(question.id, "-") or "-"
+        embed.add_field(
+            name=question.label[:256],
+            value=answer[:1024],
+            inline=False,
+        )
+
+    return embed
+
+
+def _format_form_question_type(question_type: FormQuestionType) -> str:
+    if question_type is FormQuestionType.SHORT:
+        return "resposta curta"
+    if question_type is FormQuestionType.MULTI_SELECT:
+        return "multipla escolha"
+    return "combo-box"
 
 
 def build_giveaway_event_embed(

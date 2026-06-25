@@ -9,8 +9,10 @@ from discord.ext import commands
 from app.core.config import get_settings
 from app.core.logger import setup_logging
 from app.repositories.bolao_repository import SQLiteBolaoRepository
+from app.repositories.form_repository import SQLiteFormRepository
 from app.repositories.giveaway_repository import SQLiteGiveawayRepository
 from app.services.bolao_service import BolaoService
+from app.services.form_service import FormService
 from app.services.giveaway_service import GiveawayService
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,8 @@ class DiscordBot(commands.Bot):
         self.giveaway_service = GiveawayService(self.giveaway_repository)
         self.bolao_repository = SQLiteBolaoRepository(settings.BOLAO_DB_PATH)
         self.bolao_service = BolaoService(self.bolao_repository)
+        self.form_repository = SQLiteFormRepository(settings.FORM_DB_PATH)
+        self.form_service = FormService(self.form_repository)
 
         intents = discord.Intents.default()
         intents.guilds = True

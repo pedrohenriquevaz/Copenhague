@@ -129,14 +129,12 @@ class BolaoGuessModal(discord.ui.Modal):
 
         try:
             await receiver.send(
-                (
-                    f"Novo palpite recebido no bolao **{event.title}**.\n"
-                    f"Participante: {interaction.user.mention}\n"
-                    f"ID do participante: `{interaction.user.id}`\n"
-                    f"Jogo: {event.team_1} x {event.team_2}\n"
-                    f"Palpite: {format_bolao_guess(event, guess)}\n"
-                    f"Enviado em: <t:{int(guess.created_at.timestamp())}:F>"
-                )
+                f"Novo palpite recebido no bolao **{event.title}**.\n"
+                f"Participante: {interaction.user.mention}\n"
+                f"ID do participante: `{interaction.user.id}`\n"
+                f"Jogo: {event.team_1} x {event.team_2}\n"
+                f"Palpite: {format_bolao_guess(event, guess)}\n"
+                f"Enviado em: <t:{int(guess.created_at.timestamp())}:F>"
             )
         except discord.Forbidden:
             logger.warning(

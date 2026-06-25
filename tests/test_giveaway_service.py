@@ -6,6 +6,7 @@ from pathlib import Path
 from app.models.giveaway import GiveawayDrawStatus
 from app.repositories.giveaway_repository import SQLiteGiveawayRepository
 from app.services.giveaway_service import GiveawayService
+from app.utils.embeds import build_giveaway_final_embed, format_reward_text
 
 
 def test_parse_reward_plan_supports_compact_and_json() -> None:
@@ -118,6 +119,64 @@ async def test_giveaway_extra_tickets_allow_additional_draws() -> None:
 
         blocked_again = await service.draw_code_for_user(event.id, 10)
         assert blocked_again.status is GiveawayDrawStatus.ALREADY_CLAIMED
+    finally:
+        repository = None
+        service = None
+        gc.collect()
+        if db_path.exists():
+            db_path.unlink()
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{db_path}{suffix}")
+            if sidecar.exists():
+                sidecar.unlink()
+
+
+async def test_giveaway_finalization_returns_and_embeds_winners() -> None:
+    db_path = Path("tests") / "tmp_giveaway_winners.sqlite3"
+    if db_path.exists():
+        db_path.unlink()
+
+    try:
+        repository = SQLiteGiveawayRepository(db_path)
+        service = GiveawayService(repository)
+
+        creation = await service.create_event(
+            title="Evento premiado",
+            description="Descricao do evento",
+            created_by=123,
+            total_codes=1,
+            reward_plan="Diamantes|100|1",
+        )
+        event = creation.event
+
+        draw = await service.draw_code_for_user(event.id, 10)
+        assert draw.status is GiveawayDrawStatus.SUCCESS
+        assert draw.claim is not None
+        assert draw.claim.reward_amount == 100
+
+        finalization = await service.finalize_event(event.id)
+        assert len(finalization.winning_claims) == 1
+
+        winner = finalization.winning_claims[0]
+        winner_lines = [
+            (
+                f"1. <@{winner.user_id}> (`{winner.user_id}`) - "
+                f"`{winner.code}` - "
+                f"{format_reward_text(winner.reward_name, winner.reward_amount)}"
+            )
+        ]
+        embed = build_giveaway_final_embed(
+            finalization.event,
+            finalization.remaining_codes,
+            winner_lines,
+        )
+
+        winners_field = next(
+            field for field in embed.fields if field.name.startswith("Ganhadores")
+        )
+        assert "Nenhum codigo premiado" not in winners_field.value
+        assert "<@10>" in winners_field.value
+        assert "100 Diamantes" in winners_field.value
     finally:
         repository = None
         service = None

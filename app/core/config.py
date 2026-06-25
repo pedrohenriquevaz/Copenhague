@@ -21,6 +21,7 @@ class Settings:
     ENABLE_MESSAGE_CONTENT_INTENT: bool
     GIVEAWAY_DB_PATH: str
     BOLAO_DB_PATH: str
+    FORM_DB_PATH: str
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -50,6 +51,10 @@ class Settings:
             ),
             BOLAO_DB_PATH=env.get(
                 "BOLAO_DB_PATH",
+                str(Path("data") / "bot.db"),
+            ),
+            FORM_DB_PATH=env.get(
+                "FORM_DB_PATH",
                 str(Path("data") / "bot.db"),
             ),
         )
