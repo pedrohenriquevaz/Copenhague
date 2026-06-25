@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from app.models.giveaway import (
+    GiveawayCode,
     GiveawayCreationResult,
     GiveawayEvent,
     GiveawayFinalizationResult,
@@ -217,14 +218,6 @@ class GiveawayCog(commands.Cog):
                 )
                 return
 
-        stats = await self.service.get_event_stats(event.id)
-        if stats is None:
-            await interaction.followup.send(
-                "Nao foi possivel carregar os dados do evento.",
-                ephemeral=True,
-            )
-            return
-
         event_to_publish = event
         if parsed_color is not None:
             event_to_publish = replace(event_to_publish, embed_color=parsed_color)
@@ -235,7 +228,7 @@ class GiveawayCog(commands.Cog):
                 expires_at=datetime.now(UTC) + timedelta(minutes=duration_minutes),
             )
 
-        embed = build_giveaway_event_embed(event_to_publish, stats)
+        embed = build_giveaway_event_embed(event_to_publish, None)
         view = GiveawayClaimView(self.bot, event.id)
 
         try:
@@ -312,6 +305,39 @@ class GiveawayCog(commands.Cog):
             "Evento encerrado com sucesso.",
             ephemeral=True,
         )
+
+    @app_commands.command(
+        name="giveaway_codes",
+        description="Consulta os codigos ainda disponiveis de um evento.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        event_id="ID do evento do giveaway.",
+    )
+    async def giveaway_codes(
+        self,
+        interaction: discord.Interaction,
+        event_id: int,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado dentro de um servidor.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        message, remaining_codes = await self._build_available_codes_response(event_id)
+        await interaction.followup.send(message, ephemeral=True)
+
+        remaining_lines = self._format_available_code_lines(remaining_codes)
+        for chunk in self._chunk_lines(remaining_lines, limit=1800):
+            await interaction.followup.send(
+                f"```text\n{chunk}\n```",
+                ephemeral=True,
+            )
 
     @app_commands.command(
         name="give_ticket",
@@ -624,6 +650,40 @@ class GiveawayCog(commands.Cog):
             chunks.append(current)
 
         return chunks
+
+    async def _build_available_codes_response(
+        self,
+        event_id: int,
+    ) -> tuple[str, list[GiveawayCode]]:
+        event = await self.service.get_event(event_id)
+        if event is None:
+            return "Nao encontrei um evento com esse ID.", []
+
+        stats = await self.service.get_event_stats(event_id)
+        remaining_codes = await self.service.list_remaining_codes(event_id)
+
+        if stats is None:
+            return "Nao foi possivel carregar os dados do evento.", []
+
+        status = "ativo" if event.is_active else "encerrado"
+        message = (
+            f"Evento **#{event.id}** ({status}): **{event.title}**\n"
+            f"Codigos totais: **{stats.total_codes}**\n"
+            f"Codigos resgatados: **{stats.claimed_codes}**\n"
+            f"Codigos disponiveis: **{stats.available_codes}**"
+        )
+
+        if not remaining_codes:
+            message = f"{message}\n\nNao ha codigos disponiveis para este evento."
+
+        return message, remaining_codes
+
+    @staticmethod
+    def _format_available_code_lines(codes: list[GiveawayCode]) -> list[str]:
+        return [
+            f"{item.code} - {format_reward_text(item.reward_name, item.reward_amount)}"
+            for item in codes
+        ]
 
     async def cog_app_command_error(
         self,

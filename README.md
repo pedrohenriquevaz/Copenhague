@@ -59,6 +59,7 @@ Comandos administrativos disponiveis:
 - `/giveaway_create`
 - `/giveaway_publish`
 - `/giveaway_unpublish`
+- `/giveaway_codes`
 
 `/giveaway_create` aceita:
 
@@ -79,6 +80,12 @@ Comandos administrativos disponiveis:
 
 - `event_id`
 - `delete_message`
+
+`/giveaway_codes` aceita:
+
+- `event_id`
+
+Ele responde de forma privada com os codigos ainda disponiveis do evento.
 
 Formato do `reward_plan` aceito no `giveaway_create`:
 

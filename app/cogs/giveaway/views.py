@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import cast
 
@@ -11,7 +10,6 @@ from app.models.giveaway import GiveawayDrawStatus
 from app.services.giveaway_service import GiveawayService
 from app.utils.embeds import (
     build_giveaway_claim_embed,
-    build_giveaway_event_embed,
     format_reward_text,
 )
 
@@ -25,7 +23,6 @@ class GiveawayClaimView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
         self.event_id = event_id
-        self._refresh_task: asyncio.Task[None] | None = None
 
         self.claim_button = discord.ui.Button(
             label="Resgatar codigo",
@@ -69,9 +66,6 @@ class GiveawayClaimView(discord.ui.View):
             await interaction.followup.send(
                 "Este evento acabou de ficar sem codigos disponiveis.",
                 ephemeral=True,
-            )
-            self._schedule_event_message_refresh(
-                result.event.id if result.event else self.event_id
             )
             return
 
@@ -131,8 +125,6 @@ class GiveawayClaimView(discord.ui.View):
                 except discord.HTTPException:
                     logger.exception("Erro ao enviar anuncio publico do giveaway.")
 
-        self._schedule_event_message_refresh(event.id)
-
     async def _notify_user(
         self,
         event,
@@ -170,68 +162,3 @@ class GiveawayClaimView(discord.ui.View):
             )
         except discord.HTTPException:
             logger.exception("Erro ao enviar DM de notificacao do giveaway.")
-
-    async def _refresh_event_message(self, event_id: int) -> None:
-        """Atualiza o embed publico com os codigos restantes."""
-
-        service = cast(
-            GiveawayService | None,
-            getattr(self.bot, "giveaway_service", None),
-        )
-        if service is None:
-            return
-
-        event = await service.get_event(event_id)
-        if event is None or event.channel_id is None or event.message_id is None:
-            return
-
-        stats = await service.get_event_stats(event_id)
-        if stats is None:
-            return
-
-        channel = self.bot.get_channel(event.channel_id)
-        if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(event.channel_id)
-            except (discord.Forbidden, discord.HTTPException):
-                logger.warning(
-                    "Nao foi possivel localizar o canal do giveaway %s.",
-                    event_id,
-                )
-                return
-
-        if not hasattr(channel, "fetch_message"):
-            return
-
-        try:
-            message = await channel.fetch_message(event.message_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            logger.warning(
-                "Nao foi possivel atualizar a mensagem do giveaway %s.",
-                event_id,
-            )
-            return
-
-        self.claim_button.disabled = (not event.is_active) or stats.available_codes <= 0
-        embed = build_giveaway_event_embed(event, stats, closed=not event.is_active)
-        try:
-            await message.edit(embed=embed, view=self)
-        except discord.HTTPException:
-            logger.exception(
-                "Erro ao atualizar a mensagem publica do giveaway %s.",
-                event_id,
-            )
-
-    def _schedule_event_message_refresh(self, event_id: int) -> None:
-        """Agrupa rajadas de cliques para evitar editar a mensagem a cada claim."""
-
-        if self._refresh_task is not None and not self._refresh_task.done():
-            return
-
-        self._refresh_task = asyncio.create_task(
-            self._delayed_refresh_event_message(event_id)
-        )
-
-    async def _delayed_refresh_event_message(self, event_id: int) -> None:
-        await asyncio.sleep(2)
-        await self._refresh_event_message(event_id)
