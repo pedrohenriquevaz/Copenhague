@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from app.models.bolao import BolaoEvent
 from app.services.bolao_service import BolaoService, BolaoValidationError
-from app.ui.bolao_views import BolaoGuessView
+from app.ui.bolao_views import BolaoGuessButton, BolaoGuessView
 from app.utils.embeds import (
     build_bolao_event_embed,
     build_bolao_list_embed,
@@ -26,22 +26,10 @@ class BolaoCog(commands.Cog):
         self.service = cast(BolaoService, bot.bolao_service)  # type: ignore[attr-defined]
 
     async def register_active_views(self) -> None:
-        """Re-registra botoes persistentes dos boloes ativos publicados."""
+        """Registra o padrao dinamico dos botoes persistentes do bolao."""
 
-        events = await self.service.list_active_events()
-        for event in events:
-            if event.message_id is None:
-                continue
-
-            self.bot.add_view(
-                BolaoGuessView(self.bot, event.id),
-                message_id=event.message_id,
-            )
-            logger.info(
-                "View persistente registrada para o bolao #%s (mensagem %s).",
-                event.id,
-                event.message_id,
-            )
+        self.bot.add_dynamic_items(BolaoGuessButton)
+        logger.info("Botao dinamico de bolao registrado.")
 
     @app_commands.command(
         name="bolao_create",
@@ -122,7 +110,6 @@ class BolaoCog(commands.Cog):
             channel_id=target_channel.id,
             message_id=message.id,
         )
-        self.bot.add_view(view, message_id=message.id)
 
         await interaction.followup.send(
             (
@@ -274,7 +261,7 @@ class BolaoCog(commands.Cog):
             return
 
         view = BolaoGuessView(self.bot, event.id)
-        view.guess_button.disabled = True
+        view.guess_button.item.disabled = True
         try:
             await message.edit(
                 embed=build_bolao_event_embed(event, closed=True),
