@@ -5,8 +5,11 @@ from collections.abc import Iterable
 import discord
 
 from app.models.bolao import BolaoEvent, BolaoGuess
+from app.models.economy import ActivityConversionResult, EconomyTransaction, UserWallet
 from app.models.form import FormDefinition, FormQuestionType, FormResponse
 from app.models.giveaway import GiveawayCode, GiveawayEvent, GiveawayEventStats
+from app.models.guild_settings import GuildEconomySettings
+from app.models.shop import RewardItem, RewardPurchase
 
 
 def format_reward_text(
@@ -48,6 +51,184 @@ def parse_color_value(value: str | None) -> int | None:
     if parsed < 0 or parsed > 0xFFFFFF:
         raise ValueError("A cor precisa estar entre 000000 e FFFFFF.")
     return parsed
+
+
+def format_points(amount: int, currency_name: str = "pontos") -> str:
+    """Formata pontos com separador visual simples."""
+
+    return f"{amount:,}".replace(",", ".") + f" {currency_name}"
+
+
+def build_wallet_embed(
+    wallet: UserWallet,
+    settings: GuildEconomySettings,
+    *,
+    title: str = "Carteira",
+) -> discord.Embed:
+    """Cria embed de saldo."""
+
+    embed = discord.Embed(title=title, color=discord.Color.green())
+    embed.add_field(
+        name="Saldo atual",
+        value=format_points(wallet.balance, settings.currency_name),
+        inline=False,
+    )
+    embed.add_field(
+        name="Total ganho",
+        value=format_points(wallet.total_earned, settings.currency_name),
+        inline=True,
+    )
+    embed.add_field(
+        name="Total gasto",
+        value=format_points(wallet.total_spent, settings.currency_name),
+        inline=True,
+    )
+    embed.set_footer(text=f"Guild {wallet.guild_id} | Usuario {wallet.user_id}")
+    return embed
+
+
+def build_transaction_history_embed(
+    transactions: list[EconomyTransaction],
+    settings: GuildEconomySettings,
+) -> discord.Embed:
+    """Cria embed com historico recente."""
+
+    embed = discord.Embed(title="Historico de pontos", color=discord.Color.green())
+    if not transactions:
+        embed.description = "Nenhuma transacao registrada ainda."
+        return embed
+
+    lines = []
+    for transaction in transactions:
+        sign = "+" if transaction.amount > 0 else ""
+        lines.append(
+            f"`{sign}{transaction.amount}` {settings.currency_name} | "
+            f"{transaction.type.value} | {transaction.reason or 'sem motivo'}"
+        )
+    embed.description = _format_embed_lines(lines, limit=4000)
+    return embed
+
+
+def build_ranking_embed(
+    wallets: list[UserWallet],
+    settings: GuildEconomySettings,
+) -> discord.Embed:
+    """Cria embed de ranking de saldo."""
+
+    embed = discord.Embed(title="Ranking de pontos", color=discord.Color.green())
+    if not wallets:
+        embed.description = "Ainda nao ha carteiras com pontos."
+        return embed
+
+    lines = [
+        (
+            f"**#{index}** <@{wallet.user_id}> - "
+            f"`{format_points(wallet.balance, settings.currency_name)}`"
+        )
+        for index, wallet in enumerate(wallets, start=1)
+    ]
+    embed.description = _format_embed_lines(lines, limit=4000)
+    return embed
+
+
+def build_activity_conversion_embed(
+    result: ActivityConversionResult,
+    settings: GuildEconomySettings,
+) -> discord.Embed:
+    """Cria embed de resumo de conversao."""
+
+    embed = discord.Embed(title="Atividade convertida", color=discord.Color.green())
+    if result.total_points <= 0:
+        embed.description = (
+            "Voce ainda nao possui atividade nova suficiente para converter."
+        )
+        embed.add_field(
+            name="Minimos atuais",
+            value=(
+                f"Voz: {settings.min_voice_seconds_to_claim}s | "
+                f"Mensagens: {settings.min_messages_to_claim}"
+            ),
+            inline=False,
+        )
+        return embed
+
+    embed.add_field(
+        name="Tempo novo em call",
+        value=f"{result.voice_seconds_delta // 60} minuto(s)",
+        inline=True,
+    )
+    embed.add_field(
+        name="Mensagens novas",
+        value=str(result.messages_delta),
+        inline=True,
+    )
+    voice_points = format_points(result.voice_points, settings.currency_name)
+    message_points = format_points(result.message_points, settings.currency_name)
+    total_points = format_points(result.total_points, settings.currency_name)
+    points_summary = (
+        f"Call: {voice_points}\n"
+        f"Mensagens: {message_points}\n"
+        f"Total: {total_points}"
+    )
+    embed.add_field(
+        name="Pontos recebidos",
+        value=points_summary,
+        inline=False,
+    )
+    embed.add_field(
+        name="Saldo atual",
+        value=format_points(result.wallet.balance, settings.currency_name),
+        inline=False,
+    )
+    return embed
+
+
+def build_shop_embed(
+    rewards: list[RewardItem],
+    settings: GuildEconomySettings,
+) -> discord.Embed:
+    """Cria embed de loja."""
+
+    embed = discord.Embed(title="Loja de recompensas", color=discord.Color.purple())
+    if not rewards:
+        embed.description = "A loja ainda nao possui recompensas disponiveis."
+        return embed
+
+    lines = []
+    for reward in rewards:
+        stock = (
+            "ilimitado" if reward.stock_quantity is None else str(reward.stock_quantity)
+        )
+        lines.append(
+            f"**#{reward.id} - {reward.name}**\n"
+            f"Preco: {format_points(reward.price, settings.currency_name)} | "
+            f"Estoque: {stock} | Tipo: {reward.type.value}"
+        )
+    embed.description = _format_embed_lines(lines, limit=4000)
+    return embed
+
+
+def build_purchases_embed(
+    purchases: list[RewardPurchase],
+    settings: GuildEconomySettings,
+) -> discord.Embed:
+    """Cria embed de compras recentes."""
+
+    embed = discord.Embed(title="Minhas compras", color=discord.Color.purple())
+    if not purchases:
+        embed.description = "Voce ainda nao comprou recompensas."
+        return embed
+
+    lines = [
+        (
+            f"Compra #{purchase.id} | Recompensa #{purchase.reward_id} | "
+            f"{format_points(purchase.price_paid, settings.currency_name)} | "
+            f"{purchase.delivery_status.value}"
+        )
+        for purchase in purchases
+    ]
+    embed.description = _format_embed_lines(lines, limit=4000)
+    return embed
 
 
 def build_bolao_event_embed(

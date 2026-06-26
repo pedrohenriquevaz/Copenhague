@@ -21,3 +21,15 @@ __all__ = [
     "GiveawayServiceError",
     "GiveawayValidationError",
 ]
+from .activity_service import ActivityService, ActivityValidationError
+from .economy_service import EconomyService, EconomyValidationError
+from .shop_service import ShopService, ShopValidationError
+
+__all__ = [
+    "ActivityService",
+    "ActivityValidationError",
+    "EconomyService",
+    "EconomyValidationError",
+    "ShopService",
+    "ShopValidationError",
+]

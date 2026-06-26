@@ -9,11 +9,15 @@ from discord.ext import commands
 from app.core.config import get_settings
 from app.core.logger import setup_logging
 from app.repositories.bolao_repository import SQLiteBolaoRepository
+from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.repositories.form_repository import SQLiteFormRepository
 from app.repositories.giveaway_repository import SQLiteGiveawayRepository
+from app.services.activity_service import ActivityService
 from app.services.bolao_service import BolaoService
+from app.services.economy_service import EconomyService
 from app.services.form_service import FormService
 from app.services.giveaway_service import GiveawayService
+from app.services.shop_service import ShopService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,10 @@ class DiscordBot(commands.Bot):
         self.bolao_service = BolaoService(self.bolao_repository)
         self.form_repository = SQLiteFormRepository(settings.FORM_DB_PATH)
         self.form_service = FormService(self.form_repository)
+        self.economy_repository = SQLiteEconomyRepository(settings.ECONOMY_DB_PATH)
+        self.economy_service = EconomyService(self.economy_repository)
+        self.activity_service = ActivityService(self.economy_repository)
+        self.shop_service = ShopService(self.economy_repository)
 
         intents = discord.Intents.default()
         intents.guilds = True

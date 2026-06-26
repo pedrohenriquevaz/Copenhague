@@ -15,3 +15,6 @@ __all__ = [
     "SQLiteBolaoRepository",
     "SQLiteGiveawayRepository",
 ]
+from .economy_repository import SQLiteEconomyRepository
+
+__all__ = ["SQLiteEconomyRepository"]

@@ -22,6 +22,7 @@ class Settings:
     GIVEAWAY_DB_PATH: str
     BOLAO_DB_PATH: str
     FORM_DB_PATH: str
+    ECONOMY_DB_PATH: str
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -56,6 +57,10 @@ class Settings:
             FORM_DB_PATH=env.get(
                 "FORM_DB_PATH",
                 str(Path("data") / "bot.db"),
+            ),
+            ECONOMY_DB_PATH=env.get(
+                "ECONOMY_DB_PATH",
+                str(Path("data") / "economy.sqlite3"),
             ),
         )
 

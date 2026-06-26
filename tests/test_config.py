@@ -18,6 +18,7 @@ def test_settings_from_env_uses_required_and_default_values() -> None:
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is False
     assert Path(settings.GIVEAWAY_DB_PATH) == Path("data/giveaways.sqlite3")
     assert Path(settings.BOLAO_DB_PATH) == Path("data/bot.db")
+    assert Path(settings.ECONOMY_DB_PATH) == Path("data/economy.sqlite3")
 
 
 def test_settings_from_env_parses_optional_values() -> None:
@@ -31,6 +32,7 @@ def test_settings_from_env_parses_optional_values() -> None:
             "ENABLE_MESSAGE_CONTENT_INTENT": "1",
             "GIVEAWAY_DB_PATH": "custom.sqlite3",
             "BOLAO_DB_PATH": "custom_bolao.sqlite3",
+            "ECONOMY_DB_PATH": "custom_economy.sqlite3",
         }
     )
 
@@ -41,6 +43,7 @@ def test_settings_from_env_parses_optional_values() -> None:
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is True
     assert settings.GIVEAWAY_DB_PATH == "custom.sqlite3"
     assert settings.BOLAO_DB_PATH == "custom_bolao.sqlite3"
+    assert settings.ECONOMY_DB_PATH == "custom_economy.sqlite3"
 
 
 def test_settings_from_env_requires_token() -> None:
