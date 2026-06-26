@@ -123,9 +123,7 @@ class FormService:
             options = cls._parse_options(parts[2] if len(parts) >= 3 else "")
 
             if question_type is FormQuestionType.SHORT and options:
-                raise FormValidationError(
-                    "Perguntas curtas nao devem receber opcoes."
-                )
+                raise FormValidationError("Perguntas curtas nao devem receber opcoes.")
 
             if question_type is not FormQuestionType.SHORT and len(options) < 2:
                 raise FormValidationError(

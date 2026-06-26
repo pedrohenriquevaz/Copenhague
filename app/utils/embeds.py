@@ -58,9 +58,7 @@ def build_bolao_event_embed(
     """Cria o embed publico de um bolao."""
 
     color = (
-        discord.Color.red()
-        if closed or not event.is_active
-        else discord.Color.blue()
+        discord.Color.red() if closed or not event.is_active else discord.Color.blue()
     )
     embed = discord.Embed(
         title=event.title,
@@ -115,8 +113,7 @@ def format_bolao_guess(event: BolaoEvent, guess: BolaoGuess) -> str:
     """Formata um palpite com os nomes dos times."""
 
     return (
-        f"{event.team_1} {guess.score_team_1} x "
-        f"{guess.score_team_2} {event.team_2}"
+        f"{event.team_1} {guess.score_team_1} x " f"{guess.score_team_2} {event.team_2}"
     )
 
 

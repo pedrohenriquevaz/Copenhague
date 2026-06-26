@@ -282,9 +282,7 @@ class BolaoCog(commands.Cog):
         if channel is None or not hasattr(channel, "send"):
             return
 
-        final_score = (
-            f"{event.team_1} {score_team_1} x {score_team_2} {event.team_2}"
-        )
+        final_score = f"{event.team_1} {score_team_1} x {score_team_2} {event.team_2}"
         if not winners:
             message = (
                 f"Bolão **#{event.id} - {event.title}** encerrado.\n"
@@ -299,8 +297,7 @@ class BolaoCog(commands.Cog):
             message = (
                 f"Bolão **#{event.id} - {event.title}** encerrado.\n"
                 f"Resultado final: **{final_score}**\n"
-                f"Vencedores ({len(winners)}):\n"
-                + "\n".join(winner_lines)
+                f"Vencedores ({len(winners)}):\n" + "\n".join(winner_lines)
             )
 
         try:

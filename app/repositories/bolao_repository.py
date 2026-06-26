@@ -123,6 +123,9 @@ class SQLiteBolaoRepository:
         connection = sqlite3.connect(self._db_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA synchronous = NORMAL")
+        connection.execute("PRAGMA temp_store = MEMORY")
         return connection
 
     def _initialize_schema(self) -> None:
@@ -163,8 +166,21 @@ class SQLiteBolaoRepository:
                     ON bolao_events(is_active, created_at)
                     """)
                 connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_bolao_events_message
+                    ON bolao_events(message_id)
+                    """)
+                connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_bolao_guesses_event_user
                     ON bolao_guesses(bolao_id, user_id)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_bolao_guesses_winning
+                    ON bolao_guesses(
+                        bolao_id,
+                        score_team_1,
+                        score_team_2,
+                        created_at
+                    )
                     """)
 
     def _create_event_sync(self, event: BolaoEventCreate) -> BolaoEvent:

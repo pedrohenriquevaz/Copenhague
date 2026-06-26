@@ -98,6 +98,9 @@ class SQLiteFormRepository:
         connection = sqlite3.connect(self._db_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA synchronous = NORMAL")
+        connection.execute("PRAGMA temp_store = MEMORY")
         return connection
 
     def _initialize_schema(self) -> None:
@@ -133,6 +136,10 @@ class SQLiteFormRepository:
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_forms_active
                     ON forms(is_active, created_at)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_forms_active_published
+                    ON forms(is_active, message_id, created_at)
                     """)
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_form_responses_form_user

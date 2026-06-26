@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import sqlite3
 import threading
 from collections.abc import Sequence
@@ -238,6 +239,9 @@ class SQLiteGiveawayRepository:
         connection = sqlite3.connect(self._db_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA synchronous = NORMAL")
+        connection.execute("PRAGMA temp_store = MEMORY")
         return connection
 
     def _initialize_schema(self) -> None:
@@ -316,8 +320,16 @@ class SQLiteGiveawayRepository:
                     ON giveaway_codes(event_id, is_claimed)
                     """)
                 connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_giveaway_claims_user_latest
+                    ON giveaway_claims(event_id, user_id, claimed_at DESC, id DESC)
+                    """)
+                connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_giveaway_claims_event_user
                     ON giveaway_claims(event_id, user_id)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_giveaway_claims_event_reward
+                    ON giveaway_claims(event_id, reward_amount, reward_name)
                     """)
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_giveaway_tickets_event_user
@@ -326,6 +338,14 @@ class SQLiteGiveawayRepository:
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_giveaway_events_expires_at
                     ON giveaway_events(is_active, expires_at)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_giveaway_events_active_created
+                    ON giveaway_events(is_active, created_at)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_giveaway_events_active_published
+                    ON giveaway_events(is_active, message_id, created_at)
                     """)
 
     @staticmethod
@@ -632,14 +652,11 @@ class SQLiteGiveawayRepository:
 
     def _get_event_stats_sync(self, event_id: int) -> GiveawayEventStats | None:
         with self._lock:
-            if self._get_event_sync(event_id) is None:
-                return None
-
             with self._connect() as connection:
                 row = connection.execute(
                     """
                     SELECT
-                        COUNT(*) AS total_codes,
+                        e.total_codes AS total_codes,
                         SUM(CASE WHEN is_claimed = 1 THEN 1 ELSE 0 END)
                             AS claimed_codes,
                         SUM(
@@ -650,8 +667,10 @@ class SQLiteGiveawayRepository:
                                 ELSE 0
                             END
                         ) AS rewarded_codes
-                    FROM giveaway_codes
-                    WHERE event_id = ?
+                    FROM giveaway_events AS e
+                    LEFT JOIN giveaway_codes AS c ON c.event_id = e.id
+                    WHERE e.id = ?
+                    GROUP BY e.id
                     """,
                     (event_id,),
                 ).fetchone()
@@ -941,26 +960,26 @@ class SQLiteGiveawayRepository:
                 ).fetchone()
                 extra_tickets = int(tickets_row["extra_tickets"]) if tickets_row else 0
 
-                latest_claim_row = connection.execute(
-                    """
-                    SELECT
-                        c.id AS claim_id,
-                        c.event_id,
-                        c.user_id,
-                        c.code_id,
-                        c.claimed_at,
-                        c.reward_amount,
-                        c.reward_name,
-                        gc.code
-                    FROM giveaway_claims AS c
-                    INNER JOIN giveaway_codes AS gc ON gc.id = c.code_id
-                    WHERE c.event_id = ? AND c.user_id = ?
-                    ORDER BY c.claimed_at DESC, c.id DESC
-                    LIMIT 1
-                    """,
-                    (event_id, user_id),
-                ).fetchone()
                 if claims_used > 0 and extra_tickets <= 0:
+                    latest_claim_row = connection.execute(
+                        """
+                        SELECT
+                            c.id AS claim_id,
+                            c.event_id,
+                            c.user_id,
+                            c.code_id,
+                            c.claimed_at,
+                            c.reward_amount,
+                            c.reward_name,
+                            gc.code
+                        FROM giveaway_claims AS c
+                        INNER JOIN giveaway_codes AS gc ON gc.id = c.code_id
+                        WHERE c.event_id = ? AND c.user_id = ?
+                        ORDER BY c.claimed_at DESC, c.id DESC
+                        LIMIT 1
+                        """,
+                        (event_id, user_id),
+                    ).fetchone()
                     connection.rollback()
                     return GiveawayDrawResult(
                         status=GiveawayDrawStatus.ALREADY_CLAIMED,
@@ -1000,25 +1019,16 @@ class SQLiteGiveawayRepository:
                         extra_tickets_remaining=extra_tickets,
                     )
 
-                code_row = connection.execute(
+                available_row = connection.execute(
                     """
-                    SELECT
-                        id,
-                        event_id,
-                        code,
-                        reward_name,
-                        reward_amount,
-                        is_claimed,
-                        claimed_by,
-                        claimed_at
+                    SELECT COUNT(*) AS available_codes
                     FROM giveaway_codes
                     WHERE event_id = ? AND is_claimed = 0
-                    ORDER BY RANDOM()
-                    LIMIT 1
                     """,
                     (event_id,),
                 ).fetchone()
-                if code_row is None:
+                available_codes = int(available_row["available_codes"] or 0)
+                if available_codes <= 0:
                     connection.execute(
                         """
                         UPDATE giveaway_events
@@ -1034,6 +1044,26 @@ class SQLiteGiveawayRepository:
                         claims_used=claims_used,
                         extra_tickets_remaining=extra_tickets,
                     )
+
+                random_offset = secrets.randbelow(available_codes)
+                code_row = connection.execute(
+                    """
+                    SELECT
+                        id,
+                        event_id,
+                        code,
+                        reward_name,
+                        reward_amount,
+                        is_claimed,
+                        claimed_by,
+                        claimed_at
+                    FROM giveaway_codes
+                    WHERE event_id = ? AND is_claimed = 0
+                    ORDER BY id
+                    LIMIT 1 OFFSET ?
+                    """,
+                    (event_id, random_offset),
+                ).fetchone()
 
                 claimed_at = serialize_datetime(utc_now())
                 code = self._row_to_code(code_row)
@@ -1136,11 +1166,74 @@ class SQLiteGiveawayRepository:
                 )
 
     def _finalize_event_sync(self, event_id: int) -> GiveawayFinalizationResult:
-        remaining_codes = self._list_remaining_rewarded_codes_sync(event_id)
-        winning_claims = self._list_winning_claims_sync(event_id)
-        event = self._set_event_active_sync(event_id, is_active=False)
-        if event is None:
-            raise RuntimeError("Nao foi possivel finalizar o evento.")
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                event_row = self._get_event_row(connection, event_id)
+                if event_row is None:
+                    connection.rollback()
+                    raise RuntimeError("Nao foi possivel finalizar o evento.")
+
+                connection.execute(
+                    """
+                    UPDATE giveaway_events
+                    SET is_active = 0
+                    WHERE id = ?
+                    """,
+                    (event_id,),
+                )
+
+                event = replace(self._row_to_event(event_row), is_active=False)
+                remaining_rows = connection.execute(
+                    """
+                    SELECT
+                        id,
+                        event_id,
+                        code,
+                        reward_name,
+                        reward_amount,
+                        is_claimed,
+                        claimed_by,
+                        claimed_at
+                    FROM giveaway_codes
+                    WHERE event_id = ?
+                      AND is_claimed = 0
+                      AND (
+                          reward_name IS NOT NULL
+                          OR reward_amount IS NOT NULL
+                      )
+                    ORDER BY
+                        COALESCE(reward_amount, 0) DESC,
+                        code ASC
+                    """,
+                    (event_id,),
+                ).fetchall()
+                winning_rows = connection.execute(
+                    """
+                    SELECT
+                        c.id AS claim_id,
+                        c.event_id,
+                        c.user_id,
+                        c.code_id,
+                        c.claimed_at,
+                        c.reward_amount,
+                        c.reward_name,
+                        gc.code
+                    FROM giveaway_claims AS c
+                    INNER JOIN giveaway_codes AS gc ON gc.id = c.code_id
+                    WHERE c.event_id = ?
+                      AND (
+                          c.reward_name IS NOT NULL
+                          OR c.reward_amount IS NOT NULL
+                      )
+                    ORDER BY c.claimed_at ASC
+                    """,
+                    (event_id,),
+                ).fetchall()
+                connection.commit()
+
+        remaining_codes = [self._row_to_code(row) for row in remaining_rows]
+        winning_claims = [self._row_to_claim(row) for row in winning_rows]
 
         return GiveawayFinalizationResult(
             event=event,
