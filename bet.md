@@ -1657,7 +1657,6 @@ O módulo será considerado pronto quando:
 /cara_coroa
 /dado
 /slot
-saldo integrado
 limites básicos
 cooldown
 histórico básico

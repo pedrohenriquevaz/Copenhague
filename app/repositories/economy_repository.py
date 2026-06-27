@@ -87,6 +87,18 @@ class SQLiteEconomyRepository:
             limit,
         )
 
+    async def list_casino_transactions(
+        self,
+        guild_id: int,
+        *,
+        limit: int = 500,
+    ) -> list[EconomyTransaction]:
+        return await asyncio.to_thread(
+            self._list_casino_transactions_sync,
+            guild_id,
+            limit,
+        )
+
     async def list_top_wallets(
         self,
         guild_id: int,
@@ -512,6 +524,26 @@ class SQLiteEconomyRepository:
                     LIMIT ?
                     """,
                     (guild_id, user_id, max(1, min(limit, 50))),
+                ).fetchall()
+        return [self._row_to_transaction(row) for row in rows]
+
+    def _list_casino_transactions_sync(
+        self,
+        guild_id: int,
+        limit: int,
+    ) -> list[EconomyTransaction]:
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT *
+                    FROM economy_transactions
+                    WHERE guild_id = ?
+                      AND type IN ('CASINO_BET', 'CASINO_PAYOUT', 'REFUND')
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (guild_id, max(1, min(limit, 1000))),
                 ).fetchall()
         return [self._row_to_transaction(row) for row in rows]
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from .activity_service import ActivityService, ActivityValidationError
 from .blackjack_service import BlackjackService, BlackjackValidationError
 from .bolao_service import BolaoService, BolaoServiceError, BolaoValidationError
+from .casino_service import CasinoService, CasinoValidationError
 from .economy_service import EconomyService, EconomyValidationError
 from .giveaway_service import (
     GiveawayParsedRewardPlan,
@@ -20,6 +21,8 @@ __all__ = [
     "BolaoService",
     "BolaoServiceError",
     "BolaoValidationError",
+    "CasinoService",
+    "CasinoValidationError",
     "EconomyService",
     "EconomyValidationError",
     "GiveawayParsedRewardPlan",

@@ -3,6 +3,129 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.models.economy import UserWallet
+
+
+class CasinoGameType(StrEnum):
+    """Jogos do arcade de pontos virtuais."""
+
+    COIN_FLIP = "coin_flip"
+    DICE = "dice"
+    SLOT = "slot"
+    ROULETTE = "roulette"
+    DUEL = "duel"
+    MASCOT_RACE = "mascot_race"
+    BLACKJACK = "blackjack"
+
+
+class CasinoOutcome(StrEnum):
+    """Resultado normalizado de jogos instantaneos."""
+
+    WON = "WON"
+    LOST = "LOST"
+    DRAW = "DRAW"
+
+
+class CoinSide(StrEnum):
+    """Escolhas do Cara ou Coroa."""
+
+    CARA = "cara"
+    COROA = "coroa"
+
+
+class DiceMode(StrEnum):
+    """Modos do jogo de dados."""
+
+    NUMERO = "numero"
+    PAR = "par"
+    IMPAR = "impar"
+    MAIOR = "maior"
+    MENOR = "menor"
+
+
+class RouletteColor(StrEnum):
+    """Cores da roleta simplificada."""
+
+    VERMELHO = "vermelho"
+    PRETO = "preto"
+    VERDE = "verde"
+
+
+class DuelMode(StrEnum):
+    """Modos iniciais do duelo entre usuarios."""
+
+    SORTE = "sorte"
+    DADOS = "dados"
+
+
+class RaceMascot(StrEnum):
+    """Mascotes da corrida individual."""
+
+    DRAGAO = "dragao"
+    LOBO = "lobo"
+    RAPOSA = "raposa"
+    TARTARUGA = "tartaruga"
+    AGUIA = "aguia"
+    GATO = "gato"
+
+
+@dataclass(frozen=True, slots=True)
+class SlotSymbol:
+    """Simbolo de slot machine."""
+
+    key: str
+    label: str
+    triple_multiplier: int
+
+
+@dataclass(slots=True)
+class CasinoGameResult:
+    """Resultado financeiro e visual de um jogo instantaneo."""
+
+    guild_id: int
+    user_id: int
+    game_type: CasinoGameType
+    bet: int
+    payout: int
+    profit: int
+    outcome: CasinoOutcome
+    title: str
+    result_label: str
+    detail_lines: list[str]
+    wallet: UserWallet
+
+
+@dataclass(slots=True)
+class DuelResult:
+    """Resultado de um duelo entre dois usuarios."""
+
+    guild_id: int
+    challenger_id: int
+    challenged_id: int
+    mode: DuelMode
+    bet: int
+    winner_id: int | None
+    payout: int
+    outcome: CasinoOutcome
+    result_label: str
+    detail_lines: list[str]
+    challenger_wallet: UserWallet
+    challenged_wallet: UserWallet
+
+
+@dataclass(slots=True)
+class CasinoUserStats:
+    """Resumo agregado simples de jogos por usuario."""
+
+    guild_id: int
+    user_id: int
+    total_games_played: int
+    total_bet_amount: int
+    total_payout_amount: int
+    net_profit: int
+    biggest_win: int
+    biggest_loss: int
+
 
 class CardSuit(StrEnum):
     """Naipes usados no baralho do cassino."""
