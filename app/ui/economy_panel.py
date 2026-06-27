@@ -103,7 +103,7 @@ class EconomyPanelView(discord.ui.View):
         rewards = await shop.list_rewards(interaction.guild.id)
         await interaction.response.send_message(
             embed=build_shop_embed(rewards, settings),
-            view=ShopView(self.bot, rewards) if rewards else None,
+            view=ShopView(self.bot, rewards, settings) if rewards else None,
             ephemeral=True,
         )
 

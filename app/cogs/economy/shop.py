@@ -8,7 +8,12 @@ from discord.ext import commands
 
 from app.models.shop import RewardType, StockMode
 from app.services.shop_service import ShopService, ShopValidationError
-from app.ui.shop_panel import ShopView
+from app.ui.shop_panel import (
+    PublicBalanceButton,
+    PublicRewardSelect,
+    PublicShopView,
+    ShopView,
+)
 from app.utils.embeds import build_shop_embed, format_points
 from app.utils.permissions import has_manage_guild
 
@@ -36,7 +41,7 @@ class ShopCog(commands.Cog):
         rewards = await self.service.list_rewards(interaction.guild.id)
         await interaction.response.send_message(
             embed=build_shop_embed(rewards, settings),
-            view=ShopView(self.bot, rewards) if rewards else None,
+            view=ShopView(self.bot, rewards, settings) if rewards else None,
             ephemeral=True,
         )
 
@@ -145,6 +150,74 @@ class ShopCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(
+        name="embed_loja",
+        description="Publica a embed fixa da loja em um canal.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def embed_loja(
+        self,
+        interaction: discord.Interaction,
+        arquivo: discord.Attachment | None = None,
+        canal: discord.TextChannel | discord.Thread | None = None,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado em servidores.",
+                ephemeral=True,
+            )
+            return
+        if not has_manage_guild(interaction.user):
+            await interaction.response.send_message(
+                "Voce nao tem permissao para usar esse comando.",
+                ephemeral=True,
+            )
+            return
+
+        target_channel = canal or interaction.channel
+        if target_channel is None or not hasattr(target_channel, "send"):
+            await interaction.response.send_message(
+                "Nao foi possivel identificar o canal da loja.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        settings = await self.bot.economy_repository.get_guild_settings(  # type: ignore[attr-defined]
+            interaction.guild.id
+        )
+        rewards = await self.service.list_rewards(interaction.guild.id)
+        shop_embed = build_shop_embed(
+            rewards,
+            settings,
+            image_url=arquivo.url if arquivo is not None else None,
+        )
+
+        try:
+            message = await target_channel.send(
+                embed=shop_embed,
+                view=PublicShopView(self.bot, interaction.guild.id, rewards, settings),
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Nao tenho permissao para enviar mensagens nesse canal.",
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException:
+            await interaction.followup.send(
+                "Ocorreu um erro ao publicar a loja.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            f"Embed da loja publicada: {message.jump_url}",
+            ephemeral=True,
+        )
+
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(ShopCog(bot))
+    bot.add_dynamic_items(PublicRewardSelect, PublicBalanceButton)

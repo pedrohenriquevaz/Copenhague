@@ -615,7 +615,23 @@ class SQLiteEconomyRepository:
         channel_id: int,
     ) -> NativeVoiceSession:
         with self._lock:
-            self._close_voice_sessions_sync(guild_id, user_id, "superseded")
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT *
+                    FROM native_voice_sessions
+                    WHERE guild_id = ?
+                      AND user_id = ?
+                      AND ended_at IS NULL
+                    ORDER BY started_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (guild_id, user_id),
+                ).fetchone()
+                if row is not None and int(row["channel_id"]) == channel_id:
+                    return self._row_to_voice_session(row)
+
+            self._close_voice_sessions_sync(guild_id, user_id, None)
             with self._connect() as connection:
                 now = serialize_datetime(utc_now())
                 cursor = connection.execute(

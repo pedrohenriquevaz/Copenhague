@@ -13,6 +13,7 @@ from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.repositories.form_repository import SQLiteFormRepository
 from app.repositories.giveaway_repository import SQLiteGiveawayRepository
 from app.services.activity_service import ActivityService
+from app.services.blackjack_service import BlackjackService
 from app.services.bolao_service import BolaoService
 from app.services.economy_service import EconomyService
 from app.services.form_service import FormService
@@ -38,9 +39,12 @@ class DiscordBot(commands.Bot):
         self.economy_service = EconomyService(self.economy_repository)
         self.activity_service = ActivityService(self.economy_repository)
         self.shop_service = ShopService(self.economy_repository)
+        self.blackjack_service = BlackjackService(self.economy_repository)
 
         intents = discord.Intents.default()
         intents.guilds = True
+        intents.guild_messages = True
+        intents.voice_states = True
         intents.members = settings.ENABLE_MEMBERS_INTENT
         intents.moderation = True
         intents.message_content = settings.ENABLE_MESSAGE_CONTENT_INTENT

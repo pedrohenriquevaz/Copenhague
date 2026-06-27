@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from app.models.guild_settings import GuildEconomySettings
 from app.services.activity_service import ActivityService
 from app.ui.economy_panel import EconomyPanelView
 from app.utils.embeds import build_activity_conversion_embed
@@ -18,6 +19,14 @@ class ActivityCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.service = cast(ActivityService, bot.activity_service)  # type: ignore[attr-defined]
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        for guild in self.bot.guilds:
+            for channel in guild.voice_channels:
+                await self._sync_voice_channel(channel)
+            for channel in guild.stage_channels:
+                await self._sync_voice_channel(channel)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -47,14 +56,70 @@ class ActivityCog(commands.Cog):
                 user_id=member.id,
                 is_bot=member.bot,
             )
+            await self._sync_voice_channel(before.channel)
 
         if after.channel and before.channel != after.channel:
-            await self.service.start_voice_session(
-                guild_id=member.guild.id,
-                user_id=member.id,
-                channel_id=after.channel.id,
-                is_bot=member.bot,
-            )
+            await self._sync_voice_channel(after.channel)
+
+        if before.channel == after.channel and after.channel is not None:
+            await self._sync_voice_channel(after.channel)
+
+    async def _sync_voice_channel(
+        self,
+        channel: discord.VoiceChannel | discord.StageChannel,
+    ) -> None:
+        settings = await self.bot.economy_repository.get_guild_settings(  # type: ignore[attr-defined]
+            channel.guild.id
+        )
+        should_track_channel = self._should_track_voice_channel(channel, settings)
+
+        for user_id, is_bot in self._voice_channel_users(channel):
+            if is_bot:
+                continue
+
+            if should_track_channel:
+                await self.service.start_voice_session(
+                    guild_id=channel.guild.id,
+                    user_id=user_id,
+                    channel_id=channel.id,
+                    is_bot=is_bot,
+                )
+            else:
+                await self.service.close_voice_sessions(
+                    guild_id=channel.guild.id,
+                    user_id=user_id,
+                    is_bot=is_bot,
+                )
+
+    def _should_track_voice_channel(
+        self,
+        channel: discord.VoiceChannel | discord.StageChannel,
+        settings: GuildEconomySettings,
+    ) -> bool:
+        if settings.ignore_afk_channel and channel.guild.afk_channel == channel:
+            return False
+        if settings.count_voice_when_alone:
+            return True
+
+        human_users = [
+            user_id
+            for user_id, is_bot in self._voice_channel_users(channel)
+            if not is_bot
+        ]
+        return len(human_users) > 1
+
+    def _voice_channel_users(
+        self,
+        channel: discord.VoiceChannel | discord.StageChannel,
+    ) -> list[tuple[int, bool]]:
+        members = channel.members
+        if members:
+            return [(member.id, member.bot) for member in members]
+
+        bot_user_id = self.bot.user.id if self.bot.user else None
+        return [
+            (user_id, user_id == bot_user_id) for user_id in channel.voice_states.keys()
+        ]
 
     @app_commands.command(
         name="converter_atividade",

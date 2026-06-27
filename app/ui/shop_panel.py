@@ -5,44 +5,278 @@ from typing import cast
 import discord
 from discord.ext import commands
 
+from app.models.guild_settings import GuildEconomySettings
 from app.models.shop import RewardItem, ShopPurchaseStatus
 from app.services.economy_service import EconomyService
 from app.services.shop_service import ShopService
-from app.utils.embeds import build_purchases_embed, build_wallet_embed, format_points
+from app.utils.embeds import (
+    build_purchases_embed,
+    build_wallet_embed,
+    format_points,
+)
+
+
+def _format_stock(reward: RewardItem) -> str:
+    if reward.stock_quantity == 0:
+        return "Esgotado"
+    if reward.stock_quantity is None:
+        return "Estoque: ilimitado"
+    return f"Estoque: {reward.stock_quantity}"
+
+
+def _build_reward_options(
+    rewards: list[RewardItem],
+    settings: GuildEconomySettings,
+) -> list[discord.SelectOption]:
+    return [
+        discord.SelectOption(
+            label=reward.name[:100],
+            value=str(reward.id),
+            description=(
+                f"{format_points(reward.price, settings.currency_name)} | "
+                f"{_format_stock(reward)}"
+            )[:100],
+        )
+        for reward in rewards[:25]
+    ]
+
+
+async def _send_wallet_embed(
+    bot: commands.Bot,
+    interaction: discord.Interaction,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "A loja so funciona dentro de um servidor.",
+            ephemeral=True,
+        )
+        return
+
+    economy = cast(EconomyService, bot.economy_service)  # type: ignore[attr-defined]
+    repository = bot.economy_repository  # type: ignore[attr-defined]
+    settings = await repository.get_guild_settings(interaction.guild.id)
+    wallet = await economy.get_wallet(interaction.guild.id, interaction.user.id)
+    await interaction.response.send_message(
+        embed=build_wallet_embed(wallet, settings),
+        ephemeral=True,
+    )
+
+
+async def _send_purchase_confirmation(
+    bot: commands.Bot,
+    interaction: discord.Interaction,
+    reward: RewardItem,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "A loja so funciona dentro de um servidor.",
+            ephemeral=True,
+        )
+        return
+
+    economy = cast(EconomyService, bot.economy_service)  # type: ignore[attr-defined]
+    repository = bot.economy_repository  # type: ignore[attr-defined]
+    settings = await repository.get_guild_settings(interaction.guild.id)
+    wallet = await economy.get_wallet(interaction.guild.id, interaction.user.id)
+    stock = _format_stock(reward)
+    embed = discord.Embed(
+        title="Confirmar compra?",
+        description=reward.description,
+        color=discord.Color.purple(),
+    )
+    embed.add_field(name="Recompensa", value=reward.name, inline=False)
+    embed.add_field(
+        name="Preco",
+        value=format_points(reward.price, settings.currency_name),
+        inline=True,
+    )
+    embed.add_field(
+        name="Seu saldo",
+        value=format_points(wallet.balance, settings.currency_name),
+        inline=True,
+    )
+    embed.add_field(name="Estoque", value=stock, inline=True)
+    embed.add_field(
+        name="Saldo apos compra",
+        value=format_points(wallet.balance - reward.price, settings.currency_name),
+        inline=False,
+    )
+    await interaction.response.send_message(
+        embed=embed,
+        view=ConfirmPurchaseView(bot, reward.id),
+        ephemeral=True,
+    )
+
+
+class PublicRewardSelect(
+    discord.ui.DynamicItem[discord.ui.Select],
+    template=r"^shop_panel:reward_select:(?P<guild_id>\d+)$",
+):
+    """Select dinamico da loja fixa."""
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        guild_id: int,
+        rewards: list[RewardItem] | None = None,
+        settings: GuildEconomySettings | None = None,
+        item: discord.ui.Select | None = None,
+    ) -> None:
+        if item is None:
+            if rewards is None or settings is None:
+                raise ValueError(
+                    "A loja publica precisa de recompensas e configuracoes."
+                )
+            select = discord.ui.Select(
+                placeholder="Escolha uma recompensa",
+                min_values=1,
+                max_values=1,
+                options=_build_reward_options(rewards, settings),
+                custom_id=f"shop_panel:reward_select:{guild_id}",
+                row=0,
+            )
+        else:
+            select = item
+        super().__init__(select)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Item,
+        match,
+    ) -> PublicRewardSelect:
+        bot = cast(commands.Bot, interaction.client)
+        guild_id = int(match.group("guild_id"))
+        return cls(
+            bot,
+            guild_id,
+            item=cast(discord.ui.Select, item),
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or interaction.guild.id != self.guild_id:
+            await interaction.response.send_message(
+                "Essa loja nao pertence a este servidor.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            reward_id = int(self.item.values[0])
+        except (IndexError, ValueError):
+            await interaction.response.send_message(
+                "Nao foi possivel identificar essa recompensa.",
+                ephemeral=True,
+            )
+            return
+
+        shop = cast(ShopService, self.bot.shop_service)  # type: ignore[attr-defined]
+        reward = await shop.get_reward(reward_id)
+        if reward is None or reward.guild_id != self.guild_id or not reward.is_active:
+            await interaction.response.send_message(
+                "Essa recompensa nao esta mais disponivel.",
+                ephemeral=True,
+            )
+            return
+
+        await _send_purchase_confirmation(self.bot, interaction, reward)
+
+
+class PublicBalanceButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"^shop_panel:balance:(?P<guild_id>\d+)$",
+):
+    """Botao dinamico de consulta de pontos da loja fixa."""
+
+    def __init__(self, bot: commands.Bot, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Consultar Pontos",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"shop_panel:balance:{guild_id}",
+                row=1,
+            )
+        )
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls,
+        interaction: discord.Interaction,
+        item: discord.ui.Item,
+        match,
+    ) -> PublicBalanceButton:
+        return cls(
+            cast(commands.Bot, interaction.client),
+            int(match.group("guild_id")),
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or interaction.guild.id != self.guild_id:
+            await interaction.response.send_message(
+                "Essa loja nao pertence a este servidor.",
+                ephemeral=True,
+            )
+            return
+
+        await _send_wallet_embed(self.bot, interaction)
+
+
+class PublicShopView(discord.ui.View):
+    """View publica da loja fixa."""
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        guild_id: int,
+        rewards: list[RewardItem],
+        settings: GuildEconomySettings,
+    ) -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+        if rewards:
+            self.add_item(
+                PublicRewardSelect(
+                    bot,
+                    guild_id,
+                    rewards,
+                    settings,
+                )
+            )
+        self.add_item(PublicBalanceButton(bot, guild_id))
 
 
 class ShopView(discord.ui.View):
     """View ephemeral da loja com select de recompensas."""
 
-    def __init__(self, bot: commands.Bot, rewards: list[RewardItem]) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        rewards: list[RewardItem],
+        settings: GuildEconomySettings,
+    ) -> None:
         super().__init__(timeout=300)
         self.bot = bot
         self.rewards = rewards
-        self.add_item(RewardSelect(bot, rewards))
+        self.add_item(RewardSelect(bot, rewards, settings, row=0))
 
-    @discord.ui.button(label="Ver saldo", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Ver saldo", style=discord.ButtonStyle.secondary, row=1)
     async def balance(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                "A loja so funciona dentro de um servidor.",
-                ephemeral=True,
-            )
-            return
+        await _send_wallet_embed(self.bot, interaction)
 
-        economy = cast(EconomyService, self.bot.economy_service)  # type: ignore[attr-defined]
-        repository = self.bot.economy_repository  # type: ignore[attr-defined]
-        settings = await repository.get_guild_settings(interaction.guild.id)
-        wallet = await economy.get_wallet(interaction.guild.id, interaction.user.id)
-        await interaction.response.send_message(
-            embed=build_wallet_embed(wallet, settings),
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="Minhas compras", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        label="Minhas compras",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
     async def purchases(
         self,
         interaction: discord.Interaction,
@@ -68,22 +302,28 @@ class ShopView(discord.ui.View):
 class RewardSelect(discord.ui.Select):
     """Select menu de recompensas."""
 
-    def __init__(self, bot: commands.Bot, rewards: list[RewardItem]) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        rewards: list[RewardItem],
+        settings: GuildEconomySettings,
+        *,
+        custom_id: str | None = None,
+        row: int | None = None,
+    ) -> None:
         self.bot = bot
         self.reward_map = {str(reward.id): reward for reward in rewards[:25]}
-        options = [
-            discord.SelectOption(
-                label=reward.name[:100],
-                value=str(reward.id),
-                description=f"{reward.price} pontos | {reward.type.value}"[:100],
-            )
-            for reward in rewards[:25]
-        ]
+        select_kwargs = {}
+        if custom_id is not None:
+            select_kwargs["custom_id"] = custom_id
+        if row is not None:
+            select_kwargs["row"] = row
         super().__init__(
             placeholder="Escolha uma recompensa",
             min_values=1,
             max_values=1,
-            options=options,
+            options=_build_reward_options(rewards, settings),
+            **select_kwargs,
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -102,40 +342,7 @@ class RewardSelect(discord.ui.Select):
             )
             return
 
-        economy = cast(EconomyService, self.bot.economy_service)  # type: ignore[attr-defined]
-        repository = self.bot.economy_repository  # type: ignore[attr-defined]
-        settings = await repository.get_guild_settings(interaction.guild.id)
-        wallet = await economy.get_wallet(interaction.guild.id, interaction.user.id)
-        stock = (
-            "ilimitado" if reward.stock_quantity is None else str(reward.stock_quantity)
-        )
-        embed = discord.Embed(
-            title="Confirmar compra?",
-            description=reward.description,
-            color=discord.Color.purple(),
-        )
-        embed.add_field(name="Recompensa", value=reward.name, inline=False)
-        embed.add_field(
-            name="Preco",
-            value=format_points(reward.price, settings.currency_name),
-            inline=True,
-        )
-        embed.add_field(
-            name="Seu saldo",
-            value=format_points(wallet.balance, settings.currency_name),
-            inline=True,
-        )
-        embed.add_field(name="Estoque", value=stock, inline=True)
-        embed.add_field(
-            name="Saldo apos compra",
-            value=format_points(wallet.balance - reward.price, settings.currency_name),
-            inline=False,
-        )
-        await interaction.response.send_message(
-            embed=embed,
-            view=ConfirmPurchaseView(self.bot, reward.id),
-            ephemeral=True,
-        )
+        await _send_purchase_confirmation(self.bot, interaction, reward)
 
 
 class ConfirmPurchaseView(discord.ui.View):

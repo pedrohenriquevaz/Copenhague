@@ -186,25 +186,40 @@ def build_activity_conversion_embed(
 def build_shop_embed(
     rewards: list[RewardItem],
     settings: GuildEconomySettings,
+    *,
+    image_url: str | None = None,
+    intro_text: str | None = None,
 ) -> discord.Embed:
     """Cria embed de loja."""
 
     embed = discord.Embed(title="Loja de recompensas", color=discord.Color.purple())
+    if image_url:
+        embed.set_image(url=image_url)
+
+    intro = intro_text or (
+        "Escolha uma recompensa no menu abaixo para ver os detalhes e confirmar "
+        "a compra. Use o botao Consultar Pontos para conferir seu saldo atual."
+    )
     if not rewards:
-        embed.description = "A loja ainda nao possui recompensas disponiveis."
+        embed.description = (
+            f"{intro}\n\nA loja ainda nao possui recompensas disponiveis."
+        )
         return embed
 
     lines = []
     for reward in rewards:
-        stock = (
-            "ilimitado" if reward.stock_quantity is None else str(reward.stock_quantity)
-        )
+        if reward.stock_quantity == 0:
+            stock = "Esgotado"
+        elif reward.stock_quantity is None:
+            stock = "Estoque: ilimitado"
+        else:
+            stock = f"Estoque: {reward.stock_quantity}"
         lines.append(
-            f"**#{reward.id} - {reward.name}**\n"
-            f"Preco: {format_points(reward.price, settings.currency_name)} | "
-            f"Estoque: {stock} | Tipo: {reward.type.value}"
+            f"**{reward.name}**\n"
+            f"Preço: {format_points(reward.price, settings.currency_name)} | {stock}"
         )
-    embed.description = _format_embed_lines(lines, limit=4000)
+    reward_lines = _format_embed_lines(lines, limit=3600, separator="\n\n")
+    embed.description = f"{intro}\n\n{reward_lines}"
     return embed
 
 
@@ -556,13 +571,18 @@ def build_giveaway_final_embed(
     return embed
 
 
-def _format_embed_lines(lines: list[str], *, limit: int = 1024) -> str:
+def _format_embed_lines(
+    lines: list[str],
+    *,
+    limit: int = 1024,
+    separator: str = "\n",
+) -> str:
     value = ""
     shown = 0
 
     for line in lines:
         suffix = f"\n... e mais {len(lines) - shown}" if shown < len(lines) else ""
-        candidate = f"{value}\n{line}" if value else line
+        candidate = f"{value}{separator}{line}" if value else line
         if len(candidate) + len(suffix) > limit:
             break
 
@@ -572,6 +592,6 @@ def _format_embed_lines(lines: list[str], *, limit: int = 1024) -> str:
     if shown < len(lines):
         remaining = len(lines) - shown
         ellipsis = f"... e mais {remaining}"
-        value = f"{value}\n{ellipsis}" if value else ellipsis
+        value = f"{value}{separator}{ellipsis}" if value else ellipsis
 
     return value or "-"
