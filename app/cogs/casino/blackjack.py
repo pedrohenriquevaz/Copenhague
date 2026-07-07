@@ -12,6 +12,11 @@ from app.ui.blackjack_view import (
     announce_blackjack_win,
     build_blackjack_embed,
 )
+from app.ui.casino_animation import (
+    blackjack_animation,
+    build_casino_animation_embed,
+    play_casino_animation,
+)
 
 
 class BlackjackCog(commands.Cog):
@@ -60,15 +65,18 @@ class BlackjackCog(commands.Cog):
         if not session.is_finished:
             view = BlackjackView(self.bot, session, settings)
 
-        send_kwargs = {
-            "embed": build_blackjack_embed(session, settings),
-            "ephemeral": True,
-            "wait": True,
-        }
+        animation = blackjack_animation("deal")
+        message = await interaction.followup.send(
+            embed=build_casino_animation_embed(animation),
+            ephemeral=True,
+            wait=True,
+        )
+        await play_casino_animation(message, animation)
+        edit_kwargs = {"embed": build_blackjack_embed(session, settings)}
         if view is not None:
-            send_kwargs["view"] = view
+            edit_kwargs["view"] = view
 
-        message = await interaction.followup.send(**send_kwargs)
+        await message.edit(**edit_kwargs)
         if view is not None:
             view.message = message
         elif session.is_finished:

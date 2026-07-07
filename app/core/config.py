@@ -21,6 +21,8 @@ class Settings:
     ENABLE_MESSAGE_CONTENT_INTENT: bool
     GIVEAWAY_DB_PATH: str
     BOLAO_DB_PATH: str
+    MATCH_BET_DB_PATH: str
+    GAME_PROGRESS_DB_PATH: str
     FORM_DB_PATH: str
     ECONOMY_DB_PATH: str
 
@@ -52,6 +54,14 @@ class Settings:
             ),
             BOLAO_DB_PATH=env.get(
                 "BOLAO_DB_PATH",
+                str(Path("data") / "bot.db"),
+            ),
+            MATCH_BET_DB_PATH=env.get(
+                "MATCH_BET_DB_PATH",
+                str(Path("data") / "bot.db"),
+            ),
+            GAME_PROGRESS_DB_PATH=env.get(
+                "GAME_PROGRESS_DB_PATH",
                 str(Path("data") / "bot.db"),
             ),
             FORM_DB_PATH=env.get(

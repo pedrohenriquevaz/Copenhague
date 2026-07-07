@@ -8,6 +8,11 @@ from discord.ext import commands
 from app.models.casino import DuelMode, DuelResult
 from app.models.guild_settings import GuildEconomySettings
 from app.services.casino_service import CasinoService, CasinoValidationError
+from app.ui.casino_animation import (
+    build_casino_animation_embed,
+    duel_animation,
+    play_casino_animation,
+)
 from app.utils.embeds import format_points
 
 
@@ -126,7 +131,26 @@ class DuelChallengeView(discord.ui.View):
             return
 
         self._disable_buttons()
+        animation = duel_animation(self.mode)
         await interaction.response.edit_message(
+            embed=build_casino_animation_embed(animation),
+            view=self,
+        )
+        try:
+            message = await interaction.original_response()
+        except discord.HTTPException:
+            message = self.message
+
+        if message is None:
+            await interaction.edit_original_response(
+                embed=build_duel_result_embed(result, self.settings),
+                view=self,
+            )
+            return
+
+        self.message = message
+        await play_casino_animation(message, animation)
+        await message.edit(
             embed=build_duel_result_embed(result, self.settings),
             view=self,
         )

@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.models.economy import EconomyTransactionType
 from app.models.guild_settings import GuildEconomySettings
 from app.models.shop import RewardItem, RewardType, ShopPurchaseStatus, StockMode
 from app.repositories.economy_repository import SQLiteEconomyRepository
@@ -45,6 +46,74 @@ async def test_economy_admin_points_and_history() -> None:
 
         history = await economy.list_history(1, 10)
         assert [transaction.amount for transaction in history] == [-50, 250]
+    finally:
+        repository = None
+        economy = None
+        gc.collect()
+        _cleanup_sqlite(db_path)
+
+
+async def test_economy_bulk_give_points_grants_unique_users() -> None:
+    db_path = Path("tests") / "tmp_economy_bulk.sqlite3"
+    _cleanup_sqlite(db_path)
+
+    try:
+        repository = SQLiteEconomyRepository(db_path)
+        economy = EconomyService(repository)
+
+        results = await economy.give_points_bulk(
+            guild_id=1,
+            user_ids=[10, 20, 10],
+            actor_id=99,
+            amount=75,
+            reason="premiacao por cargo",
+            metadata={"role_id": 123},
+        )
+        wallet_10 = await economy.get_wallet(1, 10)
+        wallet_20 = await economy.get_wallet(1, 20)
+        history_10 = await economy.list_history(1, 10)
+
+        assert len(results) == 2
+        assert wallet_10.balance == 75
+        assert wallet_20.balance == 75
+        assert history_10[0].type is EconomyTransactionType.ADMIN_GIVE
+        assert history_10[0].metadata["role_id"] == 123
+    finally:
+        repository = None
+        economy = None
+        gc.collect()
+        _cleanup_sqlite(db_path)
+
+
+async def test_bot_panel_rewards_are_limited() -> None:
+    db_path = Path("tests") / "tmp_bot_panel_rewards.sqlite3"
+    _cleanup_sqlite(db_path)
+
+    try:
+        repository = SQLiteEconomyRepository(db_path)
+        economy = EconomyService(repository)
+
+        starter = await economy.claim_starter_pack(guild_id=1, user_id=10)
+        daily = await economy.claim_daily_gift(guild_id=1, user_id=10)
+        wallet = await economy.get_wallet(1, 10)
+
+        assert starter.amount == 1500
+        assert 50 <= daily.amount <= 200
+        assert wallet.balance == starter.amount + daily.amount
+
+        try:
+            await economy.claim_starter_pack(guild_id=1, user_id=10)
+        except Exception as exc:
+            assert "pacote inicial" in str(exc)
+        else:
+            raise AssertionError("Pacote inicial foi resgatado duas vezes.")
+
+        try:
+            await economy.claim_daily_gift(guild_id=1, user_id=10)
+        except Exception as exc:
+            assert "presente diario" in str(exc)
+        else:
+            raise AssertionError("Presente diario foi resgatado duas vezes no dia.")
     finally:
         repository = None
         economy = None

@@ -13,6 +13,11 @@ from app.models.casino import (
 )
 from app.models.guild_settings import GuildEconomySettings
 from app.services.blackjack_service import BlackjackService, BlackjackValidationError
+from app.ui.casino_animation import (
+    blackjack_animation,
+    build_casino_animation_embed,
+    play_casino_animation,
+)
 from app.utils.embeds import format_points
 
 OUTCOME_TEXT = {
@@ -189,17 +194,17 @@ class BlackjackView(discord.ui.View):
 
         try:
             if action == "hit":
-                self.session = await service.hit(
+                next_session = await service.hit(
                     self.session.guild_id,
                     self.session.user_id,
                 )
             elif action == "stand":
-                self.session = await service.stand(
+                next_session = await service.stand(
                     self.session.guild_id,
                     self.session.user_id,
                 )
             else:
-                self.session = await service.double_down(
+                next_session = await service.double_down(
                     self.session.guild_id,
                     self.session.user_id,
                 )
@@ -207,11 +212,34 @@ class BlackjackView(discord.ui.View):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
 
-        self._refresh_buttons()
+        self._set_buttons_disabled(True)
+        animation = blackjack_animation(action)
         await interaction.response.edit_message(
-            embed=build_blackjack_embed(self.session, self.settings),
+            embed=build_casino_animation_embed(animation),
             view=self,
         )
+        try:
+            message = await interaction.original_response()
+        except discord.HTTPException:
+            message = self.message
+
+        if message is not None:
+            self.message = message
+            await play_casino_animation(message, animation)
+
+        self.session = next_session
+        self._refresh_buttons()
+        if message is None:
+            await interaction.edit_original_response(
+                embed=build_blackjack_embed(self.session, self.settings),
+                view=self,
+            )
+        else:
+            await message.edit(
+                embed=build_blackjack_embed(self.session, self.settings),
+                view=self,
+            )
+
         if self.session.is_finished:
             await announce_blackjack_win(interaction, self.session, self.settings)
 
@@ -222,6 +250,11 @@ class BlackjackView(discord.ui.View):
             item.disabled = self.session.is_finished
             if item.label == "Dobrar" and not self.session.is_finished:
                 item.disabled = not self.session.can_double
+
+    def _set_buttons_disabled(self, disabled: bool) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = disabled
 
 
 def _format_hand(hand: BlackjackHand) -> str:

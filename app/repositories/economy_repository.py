@@ -131,6 +131,24 @@ class SQLiteEconomyRepository:
             reason,
         )
 
+    async def try_claim_reward(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        reward_key: str,
+        claim_date: str | None,
+        once: bool,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._try_claim_reward_sync,
+            guild_id,
+            user_id,
+            reward_key,
+            claim_date,
+            once,
+        )
+
     async def record_message_activity(
         self,
         *,
@@ -290,6 +308,17 @@ class SQLiteEconomyRepository:
                     )
                     """)
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS economy_reward_claims (
+                        guild_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        reward_key TEXT NOT NULL,
+                        last_claimed_at TEXT NOT NULL,
+                        last_claim_date TEXT,
+                        claim_count INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (guild_id, user_id, reward_key)
+                    )
+                    """)
+                connection.execute("""
                     CREATE TABLE IF NOT EXISTS economy_transactions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         guild_id INTEGER NOT NULL,
@@ -395,6 +424,10 @@ class SQLiteEconomyRepository:
                     CREATE INDEX IF NOT EXISTS
                         idx_economy_transactions_guild_user_created
                     ON economy_transactions(guild_id, user_id, created_at DESC)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_economy_reward_claims_user
+                    ON economy_reward_claims(guild_id, user_id, reward_key)
                     """)
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_native_voice_sessions_guild_user
@@ -614,6 +647,73 @@ class SQLiteEconomyRepository:
             reason=reason,
             created_at=parse_datetime(now),
         )
+
+    def _try_claim_reward_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        reward_key: str,
+        claim_date: str | None,
+        once: bool,
+    ) -> bool:
+        now = serialize_datetime(utc_now())
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT last_claim_date, claim_count
+                    FROM economy_reward_claims
+                    WHERE guild_id = ?
+                      AND user_id = ?
+                      AND reward_key = ?
+                    """,
+                    (guild_id, user_id, reward_key),
+                ).fetchone()
+
+                if row is not None:
+                    claim_count = int(row["claim_count"])
+                    if once and claim_count > 0:
+                        connection.rollback()
+                        return False
+                    if not once and row["last_claim_date"] == claim_date:
+                        connection.rollback()
+                        return False
+                    connection.execute(
+                        """
+                        UPDATE economy_reward_claims
+                        SET last_claimed_at = ?,
+                            last_claim_date = ?,
+                            claim_count = ?
+                        WHERE guild_id = ?
+                          AND user_id = ?
+                          AND reward_key = ?
+                        """,
+                        (
+                            now,
+                            claim_date,
+                            claim_count + 1,
+                            guild_id,
+                            user_id,
+                            reward_key,
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO economy_reward_claims (
+                            guild_id,
+                            user_id,
+                            reward_key,
+                            last_claimed_at,
+                            last_claim_date,
+                            claim_count
+                        ) VALUES (?, ?, ?, ?, ?, 1)
+                        """,
+                        (guild_id, user_id, reward_key, now, claim_date),
+                    )
+                connection.commit()
+        return True
 
     def _record_message_activity_sync(
         self,

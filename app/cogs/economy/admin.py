@@ -90,6 +90,86 @@ class EconomyAdminCog(commands.Cog):
         )
 
     @app_commands.command(
+        name="give_points_role",
+        description="Concede pontos a todos os usuarios de um cargo.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        cargo="Cargo que recebera os pontos.",
+        quantidade="Quantidade de pontos para cada usuario do cargo.",
+        motivo="Motivo registrado no historico e auditoria.",
+    )
+    async def give_points_role(
+        self,
+        interaction: discord.Interaction,
+        cargo: discord.Role,
+        quantidade: int,
+        motivo: str,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado em servidores.",
+                ephemeral=True,
+            )
+            return
+        if cargo.is_default():
+            await interaction.response.send_message(
+                "Informe um cargo especifico. O @everyone nao e aceito aqui.",
+                ephemeral=True,
+            )
+            return
+        if not await self._can_manage_economy(interaction):
+            await interaction.response.send_message(
+                "Voce nao tem permissao para usar esse comando.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        members = await self._members_for_role(interaction.guild, cargo)
+        if not members:
+            await interaction.followup.send(
+                (
+                    "Nao encontrei usuarios elegiveis nesse cargo.\n"
+                    "Se o cargo tem membros, verifique se o Members Intent esta "
+                    "habilitado no portal do Discord e no `.env` do bot."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        settings = await self.bot.economy_repository.get_guild_settings(  # type: ignore[attr-defined]
+            interaction.guild.id
+        )
+        try:
+            results = await self.service.give_points_bulk(
+                guild_id=interaction.guild.id,
+                user_ids=[member.id for member in members],
+                actor_id=interaction.user.id,
+                amount=quantidade,
+                reason=motivo,
+                metadata={"role_id": cargo.id, "role_name": cargo.name},
+            )
+        except EconomyValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        total = quantidade * len(results)
+        await interaction.followup.send(
+            (
+                "Distribuicao concluida com sucesso.\n\n"
+                f"Cargo: {cargo.mention}\n"
+                f"Usuarios contemplados: **{len(results)}**\n"
+                f"Quantidade por usuario: "
+                f"{format_points(quantidade, settings.currency_name)}\n"
+                f"Total distribuido: {format_points(total, settings.currency_name)}\n"
+                f"Motivo: {motivo}"
+            ),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
         name="remove_points",
         description="Remove pontos manualmente de um usuario.",
     )
@@ -198,6 +278,21 @@ class EconomyAdminCog(commands.Cog):
             inline=True,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @staticmethod
+    async def _members_for_role(
+        guild: discord.Guild,
+        role: discord.Role,
+    ) -> list[discord.Member]:
+        if not guild.chunked:
+            try:
+                await guild.chunk(cache=True)
+            except discord.DiscordException:
+                pass
+
+        return [
+            member for member in role.members if not member.bot and role in member.roles
+        ]
 
 
 async def setup(bot: commands.Bot) -> None:

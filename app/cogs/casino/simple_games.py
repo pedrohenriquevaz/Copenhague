@@ -10,6 +10,11 @@ from app.models.casino import CasinoGameResult, CasinoUserStats
 from app.models.economy import EconomyTransaction
 from app.models.guild_settings import GuildEconomySettings
 from app.services.casino_service import CasinoService, CasinoValidationError
+from app.ui.casino_animation import (
+    build_casino_animation_embed,
+    casino_animation_for_game,
+    play_casino_animation,
+)
 from app.ui.duel_view import DuelChallengeView, build_duel_invite_embed
 from app.utils.embeds import format_points
 
@@ -54,10 +59,7 @@ class CasinoGamesCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        await interaction.followup.send(
-            embed=build_casino_result_embed(result, settings),
-            ephemeral=True,
-        )
+        await self._send_animated_result(interaction, result, settings)
 
     @app_commands.command(
         name="dado",
@@ -97,10 +99,7 @@ class CasinoGamesCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        await interaction.followup.send(
-            embed=build_casino_result_embed(result, settings),
-            ephemeral=True,
-        )
+        await self._send_animated_result(interaction, result, settings)
 
     @app_commands.command(name="slot", description="Aposte pontos na Slot Machine.")
     @app_commands.guild_only()
@@ -120,10 +119,7 @@ class CasinoGamesCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        await interaction.followup.send(
-            embed=build_casino_result_embed(result, settings),
-            ephemeral=True,
-        )
+        await self._send_animated_result(interaction, result, settings)
 
     @app_commands.command(name="roleta", description="Aposte pontos na roleta.")
     @app_commands.guild_only()
@@ -156,10 +152,7 @@ class CasinoGamesCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        await interaction.followup.send(
-            embed=build_casino_result_embed(result, settings),
-            ephemeral=True,
-        )
+        await self._send_animated_result(interaction, result, settings)
 
     @app_commands.command(
         name="duelo",
@@ -277,10 +270,7 @@ class CasinoGamesCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        await interaction.followup.send(
-            embed=build_casino_result_embed(result, settings),
-            ephemeral=True,
-        )
+        await self._send_animated_result(interaction, result, settings)
 
     @app_commands.command(
         name="jogos_perfil",
@@ -370,6 +360,27 @@ class CasinoGamesCog(commands.Cog):
         return await self.bot.economy_repository.get_guild_settings(  # type: ignore[attr-defined]
             interaction.guild.id  # type: ignore[union-attr]
         )
+
+    async def _send_animated_result(
+        self,
+        interaction: discord.Interaction,
+        result: CasinoGameResult,
+        settings: GuildEconomySettings,
+    ) -> None:
+        animation = casino_animation_for_game(result.game_type)
+        message = await interaction.followup.send(
+            embed=build_casino_animation_embed(animation),
+            ephemeral=True,
+            wait=True,
+        )
+        await play_casino_animation(message, animation)
+        try:
+            await message.edit(embed=build_casino_result_embed(result, settings))
+        except discord.HTTPException:
+            await interaction.followup.send(
+                embed=build_casino_result_embed(result, settings),
+                ephemeral=True,
+            )
 
 
 def build_casino_result_embed(

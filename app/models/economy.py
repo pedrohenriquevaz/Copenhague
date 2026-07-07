@@ -15,6 +15,9 @@ class EconomyTransactionType(StrEnum):
     SHOP_PURCHASE = "SHOP_PURCHASE"
     CASINO_BET = "CASINO_BET"
     CASINO_PAYOUT = "CASINO_PAYOUT"
+    MATCH_BET = "MATCH_BET"
+    MATCH_BET_PAYOUT = "MATCH_BET_PAYOUT"
+    BOT_REWARD = "BOT_REWARD"
     REFUND = "REFUND"
     SYSTEM_ADJUSTMENT = "SYSTEM_ADJUSTMENT"
 
@@ -67,6 +70,16 @@ class BalanceMutationResult:
 
     wallet: UserWallet
     transaction: EconomyTransaction
+
+
+@dataclass(slots=True)
+class BotRewardClaimResult:
+    """Resultado de um resgate de recompensa do painel do bot."""
+
+    wallet: UserWallet
+    transaction: EconomyTransaction
+    reward_key: str
+    amount: int
 
 
 @dataclass(slots=True)
