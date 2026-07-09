@@ -13,7 +13,13 @@ from app.models.casino import (
     CardSuit,
 )
 from app.models.economy import EconomyTransactionType
+from app.models.guild_settings import GuildEconomySettings
 from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.services.economy_limits import (
+    apply_daily_casino_profit_cap,
+    current_daily_profit_window_start,
+)
+from app.services.game_progress_service import GameProgressService
 
 
 class BlackjackServiceError(Exception):
@@ -28,17 +34,21 @@ class BlackjackService:
     """Regras do BlackJack e integracao com a economia."""
 
     MIN_BET = 1
-    MAX_BET = 100_000
+    STREAK_BONUS_PER_WIN_PERCENT = 10
+    MAX_STREAK_BONUS_PERCENT = 50
 
     def __init__(
         self,
         repository: SQLiteEconomyRepository,
         *,
+        progress_service: GameProgressService | None = None,
         deck_factory: Callable[[], list[BlackjackCard]] | None = None,
     ) -> None:
         self._repository = repository
+        self._progress_service = progress_service
         self._deck_factory = deck_factory or self._build_shuffled_deck
         self._sessions: dict[tuple[int, int], BlackjackSession] = {}
+        self._win_streaks: dict[tuple[int, int], int] = {}
         self._lock = asyncio.Lock()
 
     async def start_game(
@@ -48,7 +58,13 @@ class BlackjackService:
         user_id: int,
         bet: int,
     ) -> BlackjackSession:
-        self._validate_bet(bet)
+        settings = await self._repository.get_guild_settings(guild_id)
+        self._validate_bet(
+            bet,
+            settings.casino_min_bet_blackjack,
+            settings.casino_max_bet,
+        )
+        await self._validate_daily_profit_limit(settings, guild_id, user_id)
         key = (guild_id, user_id)
 
         async with self._lock:
@@ -69,6 +85,7 @@ class BlackjackService:
                 deck=self._deck_factory(),
             )
             self._deal_initial_cards(session)
+            await self._unlock_blackjack_start_progress(guild_id, user_id)
 
             if session.player_hand.is_blackjack or session.dealer_hand.is_blackjack:
                 await self._resolve_natural_blackjack(session)
@@ -105,6 +122,12 @@ class BlackjackService:
                     "Voce so pode dobrar antes de pedir cartas."
                 )
 
+            settings = await self._repository.get_guild_settings(guild_id)
+            self._validate_bet(
+                session.bet * 2,
+                settings.casino_min_bet_blackjack,
+                settings.casino_max_bet,
+            )
             wallet = await self._repository.get_wallet(guild_id, user_id)
             if wallet.balance < session.bet:
                 raise BlackjackValidationError("Saldo insuficiente para dobrar.")
@@ -137,6 +160,12 @@ class BlackjackService:
 
     def has_active_session(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self._sessions
+
+    async def reset_user_state(self, guild_id: int, user_id: int) -> None:
+        async with self._lock:
+            key = (guild_id, user_id)
+            self._sessions.pop(key, None)
+            self._win_streaks.pop(key, None)
 
     async def _resolve_natural_blackjack(self, session: BlackjackSession) -> None:
         if session.player_hand.is_blackjack and session.dealer_hand.is_blackjack:
@@ -183,25 +212,104 @@ class BlackjackService:
         *,
         payout: int,
     ) -> None:
+        key = (session.guild_id, session.user_id)
+        session.base_payout = payout
+        if self._is_player_win(outcome):
+            session.win_streak = self._win_streaks.get(key, 0) + 1
+            session.payout_multiplier_percent = self._streak_multiplier_percent(
+                session.win_streak
+            )
+            session.streak_bonus = self._calculate_streak_bonus(
+                bet=session.bet,
+                payout=payout,
+                multiplier_percent=session.payout_multiplier_percent,
+            )
+            payout += session.streak_bonus
+            self._win_streaks[key] = session.win_streak
+        else:
+            session.win_streak = 0
+            session.payout_multiplier_percent = 100
+            session.streak_bonus = 0
+            self._win_streaks.pop(key, None)
+
         session.outcome = outcome
+        self._sessions.pop(key, None)
+
+        if payout > 0:
+            settings = await self._repository.get_guild_settings(session.guild_id)
+            payout = await apply_daily_casino_profit_cap(
+                self._repository,
+                settings,
+                guild_id=session.guild_id,
+                user_id=session.user_id,
+                stake=session.bet,
+                payout=payout,
+            )
         session.payout = payout
-        self._sessions.pop((session.guild_id, session.user_id), None)
 
-        if payout <= 0:
+        if payout > 0:
+            await self._repository.mutate_balance(
+                guild_id=session.guild_id,
+                user_id=session.user_id,
+                amount=payout,
+                transaction_type=EconomyTransactionType.CASINO_PAYOUT,
+                actor_id=None,
+                reason="blackjack_payout",
+                metadata={
+                    "game": "blackjack",
+                    "bet": session.bet,
+                    "outcome": outcome.value,
+                    "base_payout": session.base_payout,
+                    "streak_bonus": session.streak_bonus,
+                    "win_streak": session.win_streak,
+                    "payout_multiplier_percent": session.payout_multiplier_percent,
+                },
+            )
+        await self._unlock_blackjack_finish_progress(session)
+
+    async def _unlock_blackjack_start_progress(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> None:
+        if self._progress_service is None:
             return
+        await self._progress_service.unlock(guild_id, user_id, "first_bet")
+        await self._progress_service.unlock(guild_id, user_id, "first_blackjack")
+        await self._progress_service.evaluate_user_milestones(guild_id, user_id)
 
-        await self._repository.mutate_balance(
-            guild_id=session.guild_id,
-            user_id=session.user_id,
-            amount=payout,
-            transaction_type=EconomyTransactionType.CASINO_PAYOUT,
-            actor_id=None,
-            reason="blackjack_payout",
-            metadata={
-                "game": "blackjack",
-                "bet": session.bet,
-                "outcome": outcome.value,
-            },
+    async def _unlock_blackjack_finish_progress(
+        self,
+        session: BlackjackSession,
+    ) -> None:
+        if self._progress_service is None or session.outcome is None:
+            return
+        if self._is_player_win(session.outcome):
+            await self._progress_service.unlock(
+                session.guild_id,
+                session.user_id,
+                "first_win",
+            )
+            if session.win_streak >= 3:
+                await self._progress_service.unlock(
+                    session.guild_id,
+                    session.user_id,
+                    "blackjack_streak_3",
+                )
+        elif session.outcome in {
+            BlackjackOutcome.DEALER_BLACKJACK,
+            BlackjackOutcome.DEALER_WIN,
+            BlackjackOutcome.EXPIRED,
+            BlackjackOutcome.PLAYER_BUST,
+        }:
+            await self._progress_service.unlock(
+                session.guild_id,
+                session.user_id,
+                "first_loss",
+            )
+        await self._progress_service.evaluate_user_milestones(
+            session.guild_id,
+            session.user_id,
         )
 
     async def _debit_bet(
@@ -257,15 +365,60 @@ class BlackjackService:
         return deck
 
     @classmethod
-    def _validate_bet(cls, bet: int) -> None:
-        if bet < cls.MIN_BET:
+    def _validate_bet(cls, bet: int, min_bet: int, max_bet: int) -> None:
+        if bet < min_bet:
             raise BlackjackValidationError(
-                f"A aposta minima e de {cls.MIN_BET} ponto(s)."
+                f"A aposta minima e de {min_bet} ponto(s)."
             )
-        if bet > cls.MAX_BET:
+        if bet > max_bet:
             raise BlackjackValidationError(
-                f"A aposta maxima e de {cls.MAX_BET} ponto(s)."
+                f"A aposta maxima e de {max_bet} ponto(s)."
             )
+
+    async def _validate_daily_profit_limit(
+        self,
+        settings: GuildEconomySettings,
+        guild_id: int,
+        user_id: int,
+    ) -> None:
+        if (
+            not settings.casino_limiters_enabled
+            or settings.casino_daily_profit_limit <= 0
+        ):
+            return
+        current_profit = await self._repository.get_user_casino_profit_since(
+            guild_id,
+            user_id,
+            current_daily_profit_window_start(),
+        )
+        if current_profit >= settings.casino_daily_profit_limit:
+            raise BlackjackValidationError(
+                "Voce atingiu o teto diario de lucro dos jogos."
+            )
+
+    @staticmethod
+    def _is_player_win(outcome: BlackjackOutcome) -> bool:
+        return outcome in {
+            BlackjackOutcome.PLAYER_BLACKJACK,
+            BlackjackOutcome.PLAYER_WIN,
+        }
+
+    @classmethod
+    def _streak_multiplier_percent(cls, win_streak: int) -> int:
+        bonus = max(0, win_streak - 1) * cls.STREAK_BONUS_PER_WIN_PERCENT
+        capped_bonus = min(bonus, cls.MAX_STREAK_BONUS_PERCENT)
+        return 100 + capped_bonus
+
+    @staticmethod
+    def _calculate_streak_bonus(
+        *,
+        bet: int,
+        payout: int,
+        multiplier_percent: int,
+    ) -> int:
+        profit = max(0, payout - bet)
+        bonus_percent = max(0, multiplier_percent - 100)
+        return (profit * bonus_percent) // 100
 
 
 def calculate_hand_value(cards: list[BlackjackCard]) -> int:

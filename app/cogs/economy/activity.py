@@ -9,7 +9,7 @@ from discord.ext import commands
 from app.models.guild_settings import GuildEconomySettings
 from app.services.activity_service import ActivityService
 from app.ui.economy_panel import EconomyPanelView
-from app.utils.embeds import build_activity_conversion_embed
+from app.utils.embeds import build_activity_conversion_embed, build_economy_panel_embed
 from app.utils.permissions import has_manage_guild
 
 
@@ -73,11 +73,11 @@ class ActivityCog(commands.Cog):
         )
         should_track_channel = self._should_track_voice_channel(channel, settings)
 
-        for user_id, is_bot in self._voice_channel_users(channel):
+        for user_id, is_bot, is_muted in self._voice_channel_users(channel):
             if is_bot:
                 continue
 
-            if should_track_channel:
+            if should_track_channel and not is_muted:
                 await self.service.start_voice_session(
                     guild_id=channel.guild.id,
                     user_id=user_id,
@@ -103,23 +103,41 @@ class ActivityCog(commands.Cog):
 
         human_users = [
             user_id
-            for user_id, is_bot in self._voice_channel_users(channel)
-            if not is_bot
+            for user_id, is_bot, is_muted in self._voice_channel_users(channel)
+            if not is_bot and not is_muted
         ]
         return len(human_users) > 1
 
     def _voice_channel_users(
         self,
         channel: discord.VoiceChannel | discord.StageChannel,
-    ) -> list[tuple[int, bool]]:
+    ) -> list[tuple[int, bool, bool]]:
         members = channel.members
         if members:
-            return [(member.id, member.bot) for member in members]
+            return [
+                (member.id, member.bot, self._is_voice_state_muted(member.voice))
+                for member in members
+            ]
 
         bot_user_id = self.bot.user.id if self.bot.user else None
         return [
-            (user_id, user_id == bot_user_id) for user_id in channel.voice_states.keys()
+            (
+                user_id,
+                user_id == bot_user_id,
+                self._is_voice_state_muted(voice_state),
+            )
+            for user_id, voice_state in channel.voice_states.items()
         ]
+
+    @staticmethod
+    def _is_voice_state_muted(voice_state: discord.VoiceState | None) -> bool:
+        if voice_state is None:
+            return False
+        return bool(
+            voice_state.self_mute
+            or voice_state.mute
+            or getattr(voice_state, "suppress", False)
+        )
 
     @app_commands.command(
         name="converter_atividade",
@@ -153,9 +171,14 @@ class ActivityCog(commands.Cog):
     )
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        arquivo="Imagem exibida dentro da embed do painel.",
+        canal="Canal onde o painel sera publicado.",
+    )
     async def economy_panel_setup(
         self,
         interaction: discord.Interaction,
+        arquivo: discord.Attachment | None = None,
         canal: discord.TextChannel | discord.Thread | None = None,
     ) -> None:
         if interaction.guild is None:
@@ -182,23 +205,9 @@ class ActivityCog(commands.Cog):
         settings = await self.bot.economy_repository.get_guild_settings(  # type: ignore[attr-defined]
             interaction.guild.id
         )
-        embed = discord.Embed(
-            title="Economia da Comunidade",
-            description=(
-                "Acumule atividade participando das calls e conversando nos chats.\n"
-                "Quando quiser, clique abaixo para converter sua atividade acumulada "
-                "em pontos."
-            ),
-            color=discord.Color.green(),
-        )
-        embed.add_field(
-            name="Conversao atual",
-            value=(
-                f"1 minuto em call = {settings.voice_points_per_minute} "
-                f"{settings.currency_name}\n"
-                f"1 mensagem = {settings.message_points} {settings.currency_name}"
-            ),
-            inline=False,
+        embed = build_economy_panel_embed(
+            settings,
+            image_url=arquivo.url if arquivo is not None else None,
         )
         message = await target_channel.send(
             embed=embed, view=EconomyPanelView(self.bot)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import cast
 
 import discord
@@ -13,7 +14,10 @@ from app.ui.casino_animation import (
     duel_animation,
     play_casino_animation,
 )
+from app.ui.game_notifications import announce_game_result_to_channel
 from app.utils.embeds import format_points
+
+logger = logging.getLogger(__name__)
 
 
 def build_duel_invite_embed(
@@ -95,6 +99,8 @@ class DuelChallengeView(discord.ui.View):
         self.mode = mode
         self.settings = settings
         self.message: discord.Message | None = None
+        self._is_resolving = False
+        self._resolved = False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None or interaction.guild.id != self.guild_id:
@@ -117,6 +123,21 @@ class DuelChallengeView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
+        if self._resolved:
+            await interaction.response.send_message(
+                "Este duelo já foi encerrado.",
+                ephemeral=True,
+            )
+            return
+        if self._is_resolving:
+            await interaction.response.send_message(
+                "Este duelo já está sendo resolvido.",
+                ephemeral=True,
+            )
+            return
+
+        self._is_resolving = True
+        await interaction.response.defer()
         service = cast(CasinoService, self.bot.casino_service)  # type: ignore[attr-defined]
         try:
             result = await service.resolve_duel(
@@ -127,32 +148,59 @@ class DuelChallengeView(discord.ui.View):
                 mode=self.mode.value,
             )
         except CasinoValidationError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            self._is_resolving = False
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except Exception:
+            self._is_resolving = False
+            logger.exception(
+                "Erro inesperado ao resolver duelo entre %s e %s.",
+                self.challenger_id,
+                self.challenged_id,
+            )
+            await interaction.followup.send(
+                "Não consegui resolver esse duelo. Tente novamente em instantes.",
+                ephemeral=True,
+            )
             return
 
+        self._is_resolving = False
+        self._resolved = True
         self._disable_buttons()
         animation = duel_animation(self.mode)
-        await interaction.response.edit_message(
-            embed=build_casino_animation_embed(animation),
-            view=self,
-        )
+        message = self.message
         try:
-            message = await interaction.original_response()
-        except discord.HTTPException:
-            message = self.message
-
-        if message is None:
-            await interaction.edit_original_response(
-                embed=build_duel_result_embed(result, self.settings),
+            message = await interaction.edit_original_response(
+                embed=build_casino_animation_embed(animation),
                 view=self,
             )
+        except discord.HTTPException:
+            if message is None:
+                logger.exception("Erro ao editar mensagem inicial do duelo.")
+
+        if message is None:
+            try:
+                await interaction.edit_original_response(
+                    embed=build_duel_result_embed(result, self.settings),
+                    view=self,
+                )
+            except discord.HTTPException:
+                logger.exception("Erro ao publicar resultado do duelo.")
+            await self._announce_result(interaction.channel, result)
             return
 
         self.message = message
         await play_casino_animation(message, animation)
-        await message.edit(
-            embed=build_duel_result_embed(result, self.settings),
-            view=self,
+        try:
+            await message.edit(
+                embed=build_duel_result_embed(result, self.settings),
+                view=self,
+            )
+        except discord.HTTPException:
+            logger.exception("Erro ao editar mensagem final do duelo.")
+        await self._announce_result(
+            getattr(message, "channel", interaction.channel),
+            result,
         )
 
     @discord.ui.button(label="Recusar", style=discord.ButtonStyle.secondary)
@@ -161,6 +209,13 @@ class DuelChallengeView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
+        if self._is_resolving:
+            await interaction.response.send_message(
+                "Este duelo já está sendo resolvido.",
+                ephemeral=True,
+            )
+            return
+        self._resolved = True
         self._disable_buttons()
         embed = discord.Embed(
             title="Duelo recusado",
@@ -183,6 +238,36 @@ class DuelChallengeView(discord.ui.View):
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.disabled = True
+
+    async def _announce_result(
+        self,
+        channel: discord.abc.Messageable | None,
+        result: DuelResult,
+    ) -> None:
+        if result.winner_id is None:
+            return
+
+        loser_id = (
+            result.challenged_id
+            if result.winner_id == result.challenger_id
+            else result.challenger_id
+        )
+        await announce_game_result_to_channel(
+            channel,
+            user_id=result.winner_id,
+            game_name="Duelo",
+            stake=result.bet,
+            payout=result.payout,
+            settings=self.settings,
+        )
+        await announce_game_result_to_channel(
+            channel,
+            user_id=loser_id,
+            game_name="Duelo",
+            stake=result.bet,
+            payout=0,
+            settings=self.settings,
+        )
 
 
 def _format_duel_mode(mode: DuelMode) -> str:

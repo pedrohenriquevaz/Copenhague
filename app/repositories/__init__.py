@@ -17,6 +17,14 @@ from .match_bet_repository import (
     MatchBetRepositoryProtocol,
     SQLiteMatchBetRepository,
 )
+from .postgres_game_progress_repository import PostgresGameProgressRepository
+from .postgres_repositories import (
+    PostgresBolaoRepository,
+    PostgresEconomyRepository,
+    PostgresFormRepository,
+    PostgresGiveawayRepository,
+    PostgresMatchBetRepository,
+)
 
 __all__ = [
     "BolaoRepositoryProtocol",
@@ -28,4 +36,10 @@ __all__ = [
     "SQLiteGameProgressRepository",
     "SQLiteGiveawayRepository",
     "SQLiteMatchBetRepository",
+    "PostgresBolaoRepository",
+    "PostgresEconomyRepository",
+    "PostgresFormRepository",
+    "PostgresGameProgressRepository",
+    "PostgresGiveawayRepository",
+    "PostgresMatchBetRepository",
 ]

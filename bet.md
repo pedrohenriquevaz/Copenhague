@@ -1651,7 +1651,7 @@ O módulo será considerado pronto quando:
 
 # 24. Roadmap recomendado
 
-## Versão 0.1 — MVP
+## Versão 0.1 — MVP — concluída
 
 ```text
 /cara_coroa
@@ -1662,7 +1662,7 @@ cooldown
 histórico básico
 ```
 
-## Versão 0.2 — Jogos com interação
+## Versão 0.2 — Jogos com interação — concluída
 
 ```text
 /blackjack
@@ -1672,7 +1672,7 @@ confirmação visual
 melhor feedback
 ```
 
-## Versão 0.3 — Jogos sociais
+## Versão 0.3 — Jogos sociais — concluída
 
 ```text
 /duelo
@@ -1681,7 +1681,7 @@ ranking de jogos
 estatísticas por usuário
 ```
 
-## Versão 0.4 — Eventos
+## Versão 0.4 — Eventos — concluída
 
 ```text
 raspadinha
@@ -1691,7 +1691,7 @@ jackpot
 conquistas
 ```
 
-## Versão 0.5 — Maturidade
+## Versão 0.5 — Maturidade — concluída em código
 
 ```text
 painel completo
@@ -1701,6 +1701,23 @@ analytics
 loja integrada
 temporadas
 ```
+
+Entregas implementadas na fase 0.5:
+
+```text
+/admin_panel
+/admin_analytics
+/economy_config
+analytics de economia, loja, cassino, bets e eventos
+configuracao de taxas, canais, cargo gerente e limite administrativo
+README atualizado
+docker-compose com volume persistente em data/
+checklist de deploy e aceite manual
+```
+
+Observacao operacional: a fase 0.5 esta concluida no codigo. A liberacao final
+depende da rodada manual em Discord real, principalmente sincronizacao de Slash
+Commands, botoes persistentes apos restart e permissao dos canais.
 
 ---
 

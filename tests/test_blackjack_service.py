@@ -103,6 +103,47 @@ async def test_blackjack_double_down_debits_extra_bet_and_pays_win(
     assert wallet.balance == 1200
 
 
+async def test_blackjack_win_streak_bonus_multiplies_profit(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await _seed_wallet(repository, balance=1000)
+    decks = [
+        [
+            card(CardRank.KING),
+            card(CardRank.NINE),
+            card(CardRank.QUEEN),
+            card(CardRank.SEVEN),
+            card(CardRank.TWO),
+        ],
+        [
+            card(CardRank.KING),
+            card(CardRank.NINE),
+            card(CardRank.QUEEN),
+            card(CardRank.SEVEN),
+            card(CardRank.TWO),
+        ],
+    ]
+    service = BlackjackService(repository, deck_factory=lambda: decks.pop(0))
+
+    first = await service.start_game(guild_id=1, user_id=10, bet=100)
+    first = await service.stand(guild_id=1, user_id=10)
+    second = await service.start_game(guild_id=1, user_id=10, bet=100)
+    second = await service.stand(guild_id=1, user_id=10)
+    wallet = await repository.get_wallet(1, 10)
+
+    assert first.outcome is BlackjackOutcome.PLAYER_WIN
+    assert first.payout == 200
+    assert first.win_streak == 1
+    assert second.outcome is BlackjackOutcome.PLAYER_WIN
+    assert second.base_payout == 200
+    assert second.streak_bonus == 10
+    assert second.payout == 210
+    assert second.win_streak == 2
+    assert second.payout_multiplier_percent == 110
+    assert wallet.balance == 1210
+
+
 async def test_blackjack_blocks_duplicate_and_insufficient_balance(
     tmp_path: Path,
 ) -> None:
@@ -124,6 +165,24 @@ async def test_blackjack_blocks_duplicate_and_insufficient_balance(
     await service.start_game(guild_id=1, user_id=10, bet=10)
     with pytest.raises(BlackjackValidationError, match="em andamento"):
         await service.start_game(guild_id=1, user_id=10, bet=10)
+
+
+async def test_blackjack_uses_configured_min_bet(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await repository.update_guild_settings(1, {"casino_min_bet_blackjack": 75})
+    await _seed_wallet(repository, balance=1000)
+    service = BlackjackService(
+        repository,
+        deck_factory=lambda: [
+            card(CardRank.FIVE),
+            card(CardRank.NINE),
+            card(CardRank.SIX),
+            card(CardRank.SEVEN),
+        ],
+    )
+
+    with pytest.raises(BlackjackValidationError, match="aposta minima"):
+        await service.start_game(guild_id=1, user_id=10, bet=50)
 
 
 async def _seed_wallet(

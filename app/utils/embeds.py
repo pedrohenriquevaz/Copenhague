@@ -9,7 +9,7 @@ from app.models.economy import ActivityConversionResult, EconomyTransaction, Use
 from app.models.form import FormDefinition, FormQuestionType, FormResponse
 from app.models.giveaway import GiveawayCode, GiveawayEvent, GiveawayEventStats
 from app.models.guild_settings import GuildEconomySettings
-from app.models.shop import RewardItem, RewardPurchase
+from app.models.shop import LevelConfig, RewardItem, RewardPurchase
 
 
 def format_reward_text(
@@ -183,12 +183,43 @@ def build_activity_conversion_embed(
     return embed
 
 
+def build_economy_panel_embed(
+    settings: GuildEconomySettings,
+    *,
+    image_url: str | None = None,
+) -> discord.Embed:
+    """Cria a embed principal do painel de economia."""
+
+    embed = discord.Embed(
+        title="Economia da Comunidade",
+        description=(
+            "Acumule atividade participando das calls e conversando nos chats.\n"
+            "Quando quiser, use os botoes abaixo para converter atividade, "
+            "consultar saldo, transferir pontos ou ver historico."
+        ),
+        color=discord.Color.green(),
+    )
+    if image_url:
+        embed.set_image(url=image_url)
+    embed.add_field(
+        name="Conversao atual",
+        value=(
+            f"1 minuto em call = {settings.voice_points_per_minute} "
+            f"{settings.currency_name}\n"
+            f"1 mensagem = {settings.message_points} {settings.currency_name}"
+        ),
+        inline=False,
+    )
+    return embed
+
+
 def build_shop_embed(
     rewards: list[RewardItem],
     settings: GuildEconomySettings,
     *,
     image_url: str | None = None,
     intro_text: str | None = None,
+    levels: list[LevelConfig] | None = None,
 ) -> discord.Embed:
     """Cria embed de loja."""
 
@@ -198,11 +229,22 @@ def build_shop_embed(
 
     intro = intro_text or (
         "Escolha uma recompensa no menu abaixo para ver os detalhes e confirmar "
-        "a compra. Use o botao Consultar Pontos para conferir seu saldo atual."
+        "a compra. Use o botão Consultar Pontos para conferir seu saldo atual."
     )
-    if not rewards:
+    level_lines = []
+    for level in levels or []:
+        if not level.is_active:
+            status = "inativo"
+        else:
+            status = "ativo"
+        level_lines.append(
+            f"**Nível {level.level}** - <@&{level.role_id}>\n"
+            f"Custo: {format_points(level.price, settings.currency_name)} | {status}"
+        )
+
+    if not rewards and not level_lines:
         embed.description = (
-            f"{intro}\n\nA loja ainda nao possui recompensas disponiveis."
+            f"{intro}\n\nA loja ainda não possui recompensas disponíveis."
         )
         return embed
 
@@ -215,11 +257,21 @@ def build_shop_embed(
         else:
             stock = f"Estoque: {reward.stock_quantity}"
         lines.append(
-            f"**{reward.name}**\n"
+            f"**#{reward.id} - {reward.name}**\n"
             f"Preço: {format_points(reward.price, settings.currency_name)} | {stock}"
         )
-    reward_lines = _format_embed_lines(lines, limit=3600, separator="\n\n")
-    embed.description = f"{intro}\n\n{reward_lines}"
+    sections = []
+    if lines:
+        reward_lines = _format_embed_lines(lines, limit=2600, separator="\n\n")
+        sections.append(f"**Recompensas**\n{reward_lines}")
+    if level_lines:
+        formatted_levels = _format_embed_lines(
+            level_lines,
+            limit=1200,
+            separator="\n\n",
+        )
+        sections.append(f"**Upgrades de nível**\n{formatted_levels}")
+    embed.description = f"{intro}\n\n" + "\n\n".join(sections)
     return embed
 
 

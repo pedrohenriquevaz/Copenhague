@@ -9,7 +9,7 @@ from discord.ext import commands
 from app.services.blackjack_service import BlackjackService, BlackjackValidationError
 from app.ui.blackjack_view import (
     BlackjackView,
-    announce_blackjack_win,
+    announce_blackjack_result,
     build_blackjack_embed,
 )
 from app.ui.casino_animation import (
@@ -80,7 +80,7 @@ class BlackjackCog(commands.Cog):
         if view is not None:
             view.message = message
         elif session.is_finished:
-            await announce_blackjack_win(interaction, session, settings)
+            await announce_blackjack_result(interaction, session, settings)
 
 
 async def setup(bot: commands.Bot) -> None:

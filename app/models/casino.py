@@ -225,6 +225,10 @@ class BlackjackSession:
     dealer_hand: BlackjackHand = field(default_factory=BlackjackHand)
     outcome: BlackjackOutcome | None = None
     payout: int = 0
+    base_payout: int = 0
+    streak_bonus: int = 0
+    win_streak: int = 0
+    payout_multiplier_percent: int = 100
     can_double: bool = True
 
     @property

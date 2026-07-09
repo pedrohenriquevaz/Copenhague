@@ -5,15 +5,28 @@ import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
+import discord
+import pytest
+
+from app.cogs.economy.activity import ActivityCog
 from app.models.economy import EconomyTransactionType
 from app.models.guild_settings import GuildEconomySettings
-from app.models.shop import RewardItem, RewardType, ShopPurchaseStatus, StockMode
+from app.models.shop import (
+    LevelConfig,
+    LevelUpgradeStatus,
+    RewardItem,
+    RewardType,
+    ShopPurchaseStatus,
+    StockMode,
+)
 from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.services.activity_service import ActivityService
-from app.services.economy_service import EconomyService
+from app.services.economy_service import EconomyService, EconomyValidationError
 from app.services.shop_service import ShopService
-from app.utils.embeds import build_shop_embed
+from app.ui.economy_panel import EconomyPanelView
+from app.utils.embeds import build_economy_panel_embed, build_shop_embed
 
 
 async def test_economy_admin_points_and_history() -> None:
@@ -85,6 +98,160 @@ async def test_economy_bulk_give_points_grants_unique_users() -> None:
         _cleanup_sqlite(db_path)
 
 
+async def test_user_transfer_debits_sender_and_credits_receiver() -> None:
+    db_path = Path("tests") / "tmp_economy_transfer.sqlite3"
+    _cleanup_sqlite(db_path)
+
+    try:
+        repository = SQLiteEconomyRepository(db_path)
+        economy = EconomyService(repository)
+        await economy.give_points(
+            guild_id=1,
+            user_id=10,
+            actor_id=99,
+            amount=500,
+            reason="seed",
+        )
+
+        result = await economy.transfer_points(
+            guild_id=1,
+            sender_id=10,
+            receiver_id=20,
+            amount=125,
+        )
+        sender_history = await economy.list_history(1, 10)
+        receiver_history = await economy.list_history(1, 20)
+
+        assert result.sender_wallet.balance == 375
+        assert result.receiver_wallet.balance == 125
+        assert result.sender_transaction.amount == -125
+        assert result.receiver_transaction.amount == 125
+        assert sender_history[0].type is EconomyTransactionType.USER_TRANSFER
+        assert receiver_history[0].type is EconomyTransactionType.USER_TRANSFER
+        assert sender_history[0].metadata["receiver_id"] == 20
+        assert receiver_history[0].metadata["sender_id"] == 10
+
+        try:
+            await economy.transfer_points(
+                guild_id=1,
+                sender_id=10,
+                receiver_id=20,
+                amount=1000,
+            )
+        except EconomyValidationError as exc:
+            assert "Saldo insuficiente" in str(exc)
+        else:
+            raise AssertionError("Transferencia sem saldo foi aceita.")
+
+        sender_wallet = await economy.get_wallet(1, 10)
+        receiver_wallet = await economy.get_wallet(1, 20)
+        assert sender_wallet.balance == 375
+        assert receiver_wallet.balance == 125
+    finally:
+        repository = None
+        economy = None
+        gc.collect()
+        _cleanup_sqlite(db_path)
+
+
+async def test_reset_user_profile_clears_economy_activity_and_shop(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "reset_economy.sqlite3")
+    economy = EconomyService(repository)
+    activity = ActivityService(repository)
+    shop = ShopService(repository)
+
+    reward = await shop.create_reward(
+        guild_id=1,
+        name="VIP",
+        description="Acesso VIP",
+        reward_type=RewardType.MANUAL_REWARD,
+        price=100,
+        stock_quantity=5,
+        stock_mode=StockMode.LIMITED,
+        max_per_user=1,
+        role_id=None,
+        delivery_message=None,
+        created_by=99,
+    )
+    await economy.claim_starter_pack(guild_id=1, user_id=10)
+    await economy.give_points(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=500,
+        reason="seed",
+    )
+    await activity.record_message(
+        guild_id=1,
+        channel_id=100,
+        user_id=10,
+        is_bot=False,
+    )
+    await activity.convert_activity(guild_id=1, user_id=10)
+    await activity.start_voice_session(
+        guild_id=1,
+        user_id=10,
+        channel_id=200,
+        is_bot=False,
+    )
+    await activity.close_voice_sessions(guild_id=1, user_id=10, is_bot=False)
+    purchase = await shop.purchase_reward(
+        guild_id=1,
+        user_id=10,
+        reward_id=reward.id,
+    )
+    await shop.configure_level(
+        guild_id=1,
+        level=1,
+        role_id=777,
+        price=100,
+        is_active=True,
+        actor_id=99,
+    )
+    level_purchase = await shop.purchase_level_upgrade(
+        guild_id=1,
+        user_id=10,
+        level=1,
+    )
+
+    result = await economy.reset_user_profile(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        reason="reset solicitado",
+    )
+    wallet = await economy.get_wallet(1, 10)
+    history = await economy.list_history(1, 10)
+    purchases = await shop.list_purchases(1, 10)
+    level_upgrades = await shop.list_user_level_upgrades(1, 10)
+    stats = await activity.get_stats(1, 10)
+
+    assert purchase.status is ShopPurchaseStatus.SUCCESS
+    assert level_purchase.status is LevelUpgradeStatus.SUCCESS
+    assert result.wallet_before is not None
+    assert result.deleted_wallets == 1
+    assert result.deleted_transactions == 5
+    assert result.deleted_reward_claims == 1
+    assert result.deleted_activity_cursors == 1
+    assert result.deleted_message_stats == 1
+    assert result.deleted_voice_sessions == 1
+    assert result.deleted_purchases == 1
+    assert result.deleted_level_upgrades == 1
+    assert wallet.balance == 0
+    assert wallet.total_earned == 0
+    assert wallet.total_spent == 0
+    assert history == []
+    assert purchases == []
+    assert level_upgrades == []
+    assert stats.total_messages == 0
+    assert stats.total_voice_seconds == 0
+
+    starter = await economy.claim_starter_pack(guild_id=1, user_id=10)
+    assert starter.amount == EconomyService.STARTER_PACK_AMOUNT
+
+
 async def test_bot_panel_rewards_are_limited() -> None:
     db_path = Path("tests") / "tmp_bot_panel_rewards.sqlite3"
     _cleanup_sqlite(db_path)
@@ -97,8 +264,8 @@ async def test_bot_panel_rewards_are_limited() -> None:
         daily = await economy.claim_daily_gift(guild_id=1, user_id=10)
         wallet = await economy.get_wallet(1, 10)
 
-        assert starter.amount == 1500
-        assert 50 <= daily.amount <= 200
+        assert starter.amount == 500
+        assert 25 <= daily.amount <= 75
         assert wallet.balance == starter.amount + daily.amount
 
         try:
@@ -119,6 +286,103 @@ async def test_bot_panel_rewards_are_limited() -> None:
         economy = None
         gc.collect()
         _cleanup_sqlite(db_path)
+
+
+async def test_economy_config_and_admin_summary() -> None:
+    db_path = Path("tests") / "tmp_economy_admin_summary.sqlite3"
+    _cleanup_sqlite(db_path)
+
+    try:
+        repository = SQLiteEconomyRepository(db_path)
+        economy = EconomyService(repository)
+
+        settings = await economy.configure_settings(
+            guild_id=1,
+            actor_id=99,
+            currency_name="estrelas",
+            voice_points_per_minute=4,
+            message_points=2,
+            min_voice_seconds_to_claim=120,
+            min_messages_to_claim=3,
+            count_voice_when_alone=True,
+            max_admin_grant_per_use=5000,
+            casino_max_bet=750,
+            casino_daily_profit_limit=2500,
+            casino_min_bet_coin_flip=10,
+            casino_min_bet_dice=20,
+            casino_min_bet_slot=30,
+            casino_min_bet_roulette=40,
+            casino_min_bet_mascot_race=50,
+            casino_min_bet_duel=60,
+            casino_min_bet_blackjack=70,
+            casino_min_bet_scratch_card=80,
+            casino_min_bet_collective_race=90,
+            casino_min_bet_match_bet=100,
+            casino_limiters_enabled=False,
+            economy_manager_role_id=123,
+            economy_channel_id=111,
+            shop_channel_id=222,
+            staff_log_channel_id=333,
+        )
+        await economy.give_points(
+            guild_id=1,
+            user_id=10,
+            actor_id=99,
+            amount=100,
+            reason="seed",
+        )
+        await economy.remove_points(
+            guild_id=1,
+            user_id=10,
+            actor_id=99,
+            amount=25,
+            reason="ajuste",
+        )
+        summary = await repository.get_admin_summary(1)
+
+        assert settings.currency_name == "estrelas"
+        assert settings.voice_points_per_minute == 4
+        assert settings.message_points == 2
+        assert settings.min_voice_seconds_to_claim == 120
+        assert settings.count_voice_when_alone is True
+        assert settings.casino_max_bet == 750
+        assert settings.casino_daily_profit_limit == 2500
+        assert settings.casino_min_bet_coin_flip == 10
+        assert settings.casino_min_bet_dice == 20
+        assert settings.casino_min_bet_slot == 30
+        assert settings.casino_min_bet_roulette == 40
+        assert settings.casino_min_bet_mascot_race == 50
+        assert settings.casino_min_bet_duel == 60
+        assert settings.casino_min_bet_blackjack == 70
+        assert settings.casino_min_bet_scratch_card == 80
+        assert settings.casino_min_bet_collective_race == 90
+        assert settings.casino_min_bet_match_bet == 100
+        assert settings.casino_limiters_enabled is False
+        assert settings.economy_manager_role_id == 123
+        assert settings.staff_log_channel_id == 333
+        assert summary["wallets"]["count"] == 1
+        assert summary["wallets"]["balance"] == 75
+        assert summary["transactions"]["ADMIN_GIVE"]["in"] == 100
+        assert summary["transactions"]["ADMIN_REMOVE"]["out"] == 25
+        assert summary["audit"]["count"] == 3
+    finally:
+        repository = None
+        economy = None
+        gc.collect()
+        _cleanup_sqlite(db_path)
+
+
+async def test_economy_config_rejects_min_bet_above_max(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    economy = EconomyService(repository)
+
+    with pytest.raises(EconomyValidationError, match="maior que o limite maximo"):
+        await economy.configure_settings(
+            guild_id=1,
+            actor_id=99,
+            casino_max_bet=100,
+            casino_min_bet_duel=101,
+        )
 
 
 async def test_activity_conversion_uses_delta_only() -> None:
@@ -217,6 +481,49 @@ async def test_activity_conversion_counts_open_voice_session() -> None:
         _cleanup_sqlite(db_path)
 
 
+async def test_voice_activity_does_not_count_muted_microphones() -> None:
+    settings = _activity_settings(count_voice_when_alone=False)
+    service = _RecordingActivityService()
+    bot = SimpleNamespace(
+        activity_service=service,
+        economy_repository=_StaticSettingsRepository(settings),
+        user=SimpleNamespace(id=999),
+    )
+    cog = ActivityCog(bot)  # type: ignore[arg-type]
+    guild = SimpleNamespace(id=1, afk_channel=None)
+
+    channel_with_two_active_users = SimpleNamespace(
+        id=200,
+        guild=guild,
+        members=[
+            _voice_member(10),
+            _voice_member(20),
+            _voice_member(30, self_mute=True),
+        ],
+        voice_states={},
+    )
+    await cog._sync_voice_channel(channel_with_two_active_users)  # type: ignore[arg-type]
+
+    assert service.started == [10, 20]
+    assert service.closed == [30]
+
+    service.started.clear()
+    service.closed.clear()
+    channel_with_one_active_user = SimpleNamespace(
+        id=201,
+        guild=guild,
+        members=[
+            _voice_member(10),
+            _voice_member(20, mute=True),
+        ],
+        voice_states={},
+    )
+    await cog._sync_voice_channel(channel_with_one_active_user)  # type: ignore[arg-type]
+
+    assert service.started == []
+    assert service.closed == [10, 20]
+
+
 async def test_shop_purchase_debits_wallet_and_stock() -> None:
     db_path = Path("tests") / "tmp_shop.sqlite3"
     _cleanup_sqlite(db_path)
@@ -276,6 +583,151 @@ async def test_shop_purchase_debits_wallet_and_stock() -> None:
         _cleanup_sqlite(db_path)
 
 
+async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "level_upgrades.sqlite3")
+    economy = EconomyService(repository)
+    shop = ShopService(repository)
+
+    level_one = await shop.configure_level(
+        guild_id=1,
+        level=1,
+        role_id=101,
+        price=200,
+        is_active=True,
+        actor_id=99,
+    )
+    await shop.configure_level(
+        guild_id=1,
+        level=2,
+        role_id=102,
+        price=500,
+        is_active=True,
+        actor_id=99,
+    )
+    current_level, next_level, levels = await shop.get_next_level(
+        guild_id=1,
+        user_id=10,
+    )
+
+    assert current_level == 0
+    assert next_level == level_one
+    assert [level.level for level in levels] == [1, 2]
+
+    insufficient = await shop.purchase_level_upgrade(
+        guild_id=1,
+        user_id=10,
+        level=1,
+    )
+    assert insufficient.status is LevelUpgradeStatus.INSUFFICIENT_BALANCE
+    assert insufficient.missing_points == 200
+
+    await economy.give_points(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=300,
+        reason="seed",
+    )
+    purchase = await shop.purchase_level_upgrade(
+        guild_id=1,
+        user_id=10,
+        level=1,
+    )
+    wallet = await economy.get_wallet(1, 10)
+    upgrades = await shop.list_user_level_upgrades(1, 10)
+    history = await economy.list_history(1, 10)
+
+    assert purchase.status is LevelUpgradeStatus.SUCCESS
+    assert purchase.balance_before == 300
+    assert purchase.balance_after == 100
+    assert wallet.balance == 100
+    assert wallet.total_spent == 200
+    assert [upgrade.level for upgrade in upgrades] == [1]
+    assert history[0].type is EconomyTransactionType.LEVEL_UPGRADE
+    assert history[0].metadata["role_id"] == 101
+
+    repeated = await shop.purchase_level_upgrade(
+        guild_id=1,
+        user_id=10,
+        level=1,
+    )
+    wallet_after_repeat = await economy.get_wallet(1, 10)
+    assert repeated.status is LevelUpgradeStatus.ALREADY_OWNED
+    assert wallet_after_repeat.balance == 100
+
+
+async def test_shop_reward_update_and_remove() -> None:
+    db_path = Path("tests") / "tmp_shop_update.sqlite3"
+    _cleanup_sqlite(db_path)
+
+    try:
+        repository = SQLiteEconomyRepository(db_path)
+        shop = ShopService(repository)
+
+        reward = await shop.create_reward(
+            guild_id=1,
+            name="VIP",
+            description="Acesso VIP",
+            reward_type=RewardType.MANUAL_REWARD,
+            price=100,
+            stock_quantity=1,
+            stock_mode=StockMode.LIMITED,
+            max_per_user=1,
+            role_id=None,
+            delivery_message=None,
+            created_by=99,
+        )
+
+        updated = await shop.update_reward(
+            guild_id=1,
+            reward_id=reward.id,
+            actor_id=99,
+            name="VIP Plus",
+            price=250,
+            stock_quantity=5,
+            stock_mode=StockMode.LIMITED,
+            max_per_user=0,
+            is_active=False,
+        )
+
+        assert updated.name == "VIP Plus"
+        assert updated.price == 250
+        assert updated.stock_quantity == 5
+        assert updated.max_per_user is None
+        assert updated.is_active is False
+        assert await shop.list_rewards(1) == []
+
+        reactivated = await shop.update_reward(
+            guild_id=1,
+            reward_id=reward.id,
+            actor_id=99,
+            stock_mode=StockMode.UNLIMITED,
+            is_active=True,
+        )
+
+        assert reactivated.stock_quantity is None
+        assert reactivated.stock_mode is StockMode.UNLIMITED
+        assert reactivated.is_active is True
+        assert [item.id for item in await shop.list_rewards(1)] == [reward.id]
+
+        removed = await shop.remove_reward(
+            guild_id=1,
+            reward_id=reward.id,
+            actor_id=99,
+            reason="teste",
+        )
+
+        assert removed.is_active is False
+        assert removed.deleted_at is not None
+        assert await shop.list_rewards(1) == []
+        assert await shop.list_rewards(1, include_inactive=True) == []
+    finally:
+        repository = None
+        shop = None
+        gc.collect()
+        _cleanup_sqlite(db_path)
+
+
 def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
     now = datetime.now(UTC)
     settings = GuildEconomySettings(
@@ -293,6 +745,8 @@ def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
         ignore_bots=True,
         count_voice_when_alone=False,
         max_admin_grant_per_use=100000,
+        casino_max_bet=1000,
+        casino_daily_profit_limit=5000,
         economy_manager_role_id=None,
         created_at=now,
         updated_at=now,
@@ -336,21 +790,142 @@ def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
         ),
     ]
 
+    levels = [
+        LevelConfig(
+            guild_id=1,
+            level=1,
+            role_id=321,
+            price=12000,
+            is_active=True,
+            created_by=99,
+            created_at=now,
+            updated_at=now,
+        ),
+    ]
+
     embed = build_shop_embed(
         rewards,
         settings,
         image_url="https://cdn.example.com/loja.png",
+        levels=levels,
     )
 
     assert embed.description is not None
     assert embed.image.url == "https://cdn.example.com/loja.png"
     assert "Escolha uma recompensa no menu abaixo" in embed.description
-    assert "**VIP Plus**" in embed.description
-    assert "#3" not in embed.description
+    assert "**#3 - VIP Plus**" in embed.description
+    assert "**#1 - Passe Semanal**" in embed.description
     assert "Tipo" not in embed.description
     assert "Preço: 17.000 pontos | Esgotado" in embed.description
     assert "Preço: 8.000 pontos | Estoque: 10" in embed.description
-    assert "\n\n**Passe Semanal**" in embed.description
+    assert "**Upgrades de nível**" in embed.description
+    assert "**Nível 1** - <@&321>" in embed.description
+    assert "\n\n**#1 - Passe Semanal**" in embed.description
+
+
+def test_economy_panel_embed_accepts_presentation_image() -> None:
+    settings = _activity_settings(count_voice_when_alone=False)
+
+    embed = build_economy_panel_embed(
+        settings,
+        image_url="https://cdn.example.com/economia.png",
+    )
+
+    assert embed.title == "Economia da Comunidade"
+    assert embed.image.url == "https://cdn.example.com/economia.png"
+    assert embed.fields[0].name == "Conversao atual"
+    assert "1 minuto em call = 2 pontos" in embed.fields[0].value
+    assert "abrir a loja" not in (embed.description or "")
+
+
+def test_economy_panel_view_removes_open_shop_button() -> None:
+    view = EconomyPanelView(bot=object())  # type: ignore[arg-type]
+    custom_ids = {
+        getattr(item, "custom_id", None)
+        for item in view.children
+        if isinstance(item, discord.ui.Button)
+    }
+
+    assert "economy_panel:shop" not in custom_ids
+    assert "economy_panel:transfer" in custom_ids
+
+
+class _RecordingActivityService:
+    def __init__(self) -> None:
+        self.started: list[int] = []
+        self.closed: list[int] = []
+
+    async def start_voice_session(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        channel_id: int,
+        is_bot: bool,
+    ) -> None:
+        self.started.append(user_id)
+
+    async def close_voice_sessions(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        is_bot: bool,
+        invalid_reason: str | None = None,
+    ) -> None:
+        self.closed.append(user_id)
+
+
+class _StaticSettingsRepository:
+    def __init__(self, settings: GuildEconomySettings) -> None:
+        self._settings = settings
+
+    async def get_guild_settings(self, guild_id: int) -> GuildEconomySettings:
+        return self._settings
+
+
+def _activity_settings(*, count_voice_when_alone: bool) -> GuildEconomySettings:
+    now = datetime.now(UTC)
+    return GuildEconomySettings(
+        guild_id=1,
+        currency_name="pontos",
+        voice_points_per_minute=2,
+        message_points=1,
+        activity_provider="native",
+        economy_channel_id=None,
+        shop_channel_id=None,
+        staff_log_channel_id=None,
+        min_voice_seconds_to_claim=60,
+        min_messages_to_claim=1,
+        ignore_afk_channel=True,
+        ignore_bots=True,
+        count_voice_when_alone=count_voice_when_alone,
+        max_admin_grant_per_use=100000,
+        casino_max_bet=1000,
+        casino_daily_profit_limit=5000,
+        economy_manager_role_id=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _voice_member(
+    user_id: int,
+    *,
+    bot: bool = False,
+    self_mute: bool = False,
+    mute: bool = False,
+    suppress: bool = False,
+):
+    return SimpleNamespace(
+        id=user_id,
+        bot=bot,
+        voice=SimpleNamespace(
+            self_mute=self_mute,
+            mute=mute,
+            suppress=suppress,
+        ),
+    )
 
 
 def _cleanup_sqlite(db_path: Path) -> None:

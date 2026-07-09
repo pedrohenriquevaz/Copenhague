@@ -19,6 +19,7 @@ from app.services.collective_race_service import (
     CollectiveRaceService,
     CollectiveRaceValidationError,
 )
+from app.ui.game_notifications import announce_game_result
 from app.utils.embeds import format_points
 
 RACE_MASCOT_EMOJIS = {
@@ -203,7 +204,7 @@ def build_achievements_embed(
     if not achievements:
         embed.add_field(
             name="Nenhuma conquista ainda",
-            value="Jogue uma raspadinha ou entre em uma corrida coletiva.",
+            value="Jogue no cassino, em duelos, no BlackJack ou nas corridas.",
             inline=False,
         )
         return embed
@@ -212,8 +213,17 @@ def build_achievements_embed(
     for unlocked in achievements:
         achievement = unlocked.achievement
         badge = f"{achievement.badge_emoji} " if achievement.badge_emoji else ""
-        lines.append(f"{badge}**{achievement.name}** - {achievement.description}")
-    embed.add_field(name="Desbloqueadas", value="\n".join(lines), inline=False)
+        reward = (
+            f" (+{achievement.reward_points} pontos)"
+            if achievement.reward_points > 0
+            else ""
+        )
+        lines.append(
+            f"{badge}**{achievement.name}**{reward} - {achievement.description}"
+        )
+    for index, chunk in enumerate(_chunk_lines(lines), start=1):
+        field_name = "Desbloqueadas" if index == 1 else f"Desbloqueadas {index}"
+        embed.add_field(name=field_name, value="\n".join(chunk), inline=False)
     return embed
 
 
@@ -222,6 +232,23 @@ def build_seasonal_embed(setting: SeasonalSetting) -> discord.Embed:
     embed.description = f"Tema atual: **{setting.theme.value}**"
     embed.set_footer(text="O tema afeta os simbolos da raspadinha.")
     return embed
+
+
+def _chunk_lines(lines: list[str], *, max_length: int = 1000) -> list[list[str]]:
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    current_length = 0
+    for line in lines:
+        line_length = len(line) + 1
+        if current and current_length + line_length > max_length:
+            chunks.append(current)
+            current = []
+            current_length = 0
+        current.append(line)
+        current_length += line_length
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 class ScratchRevealView(discord.ui.View):
@@ -255,6 +282,14 @@ class ScratchRevealView(discord.ui.View):
         await interaction.response.edit_message(
             embed=build_scratch_card_embed(self.result, self.settings, revealed=True),
             view=self,
+        )
+        await announce_game_result(
+            interaction,
+            user_id=self.result.user_id,
+            game_name=f"Raspadinha {self.result.tier_label}",
+            stake=self.result.cost,
+            payout=self.result.payout,
+            settings=self.settings,
         )
 
 

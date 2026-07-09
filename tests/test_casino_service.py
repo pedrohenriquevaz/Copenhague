@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.casino import CoinSide, RaceMascot
+from app.models.casino import CasinoOutcome, CoinSide, RaceMascot
 from app.models.economy import EconomyTransactionType
 from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.services.casino_service import (
@@ -52,14 +52,14 @@ async def test_coin_flip_debits_bet_and_pays_win(tmp_path: Path) -> None:
     )
     transactions = await repository.list_transactions(1, 10, limit=5)
 
-    assert result.payout == 200
-    assert result.profit == 100
-    assert result.wallet.balance == 1100
+    assert result.payout == 140
+    assert result.profit == 40
+    assert result.wallet.balance == 1040
     assert transactions[0].type is EconomyTransactionType.CASINO_PAYOUT
     assert transactions[1].type is EconomyTransactionType.CASINO_BET
 
 
-async def test_dice_exact_number_pays_six_times(tmp_path: Path) -> None:
+async def test_dice_exact_number_pays_reduced_multiplier(tmp_path: Path) -> None:
     repository = SQLiteEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
@@ -77,9 +77,9 @@ async def test_dice_exact_number_pays_six_times(tmp_path: Path) -> None:
     )
 
     assert result.result_label == "6"
-    assert result.payout == 600
-    assert result.profit == 500
-    assert result.wallet.balance == 1500
+    assert result.payout == 550
+    assert result.profit == 450
+    assert result.wallet.balance == 1450
 
 
 async def test_slot_triple_symbol_uses_paytable(tmp_path: Path) -> None:
@@ -261,10 +261,168 @@ async def test_casino_user_stats_and_ranking(tmp_path: Path) -> None:
 
     assert stats.total_games_played == 1
     assert stats.total_bet_amount == 100
-    assert stats.total_payout_amount == 200
-    assert stats.net_profit == 100
+    assert stats.total_payout_amount == 140
+    assert stats.net_profit == 40
     assert ranking[0].user_id == 10
-    assert ranking[0].net_profit == 100
+    assert ranking[0].net_profit == 40
+
+
+async def test_casino_uses_configured_max_bet(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await _seed_wallet(repository, balance=5000)
+    service = CasinoService(
+        repository,
+        rng=FixedRng(choices=[CoinSide.CARA]),
+        cooldown_seconds=0,
+    )
+
+    with pytest.raises(CasinoValidationError, match="aposta maxima"):
+        await service.play_coin_flip(
+            guild_id=1,
+            user_id=10,
+            bet=1001,
+            choice="cara",
+        )
+
+
+async def test_casino_uses_configured_min_bet_per_game(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await repository.update_guild_settings(1, {"casino_min_bet_dice": 50})
+    await _seed_wallet(repository, balance=5000)
+    service = CasinoService(
+        repository,
+        rng=FixedRng(numbers=[6]),
+        cooldown_seconds=0,
+    )
+
+    with pytest.raises(CasinoValidationError, match="aposta minima"):
+        await service.play_dice(
+            guild_id=1,
+            user_id=10,
+            bet=49,
+            mode="numero",
+            value=6,
+        )
+
+
+async def test_casino_caps_daily_profit(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await repository.update_guild_settings(1, {"casino_daily_profit_limit": 30})
+    await _seed_wallet(repository, balance=1000)
+    service = CasinoService(
+        repository,
+        rng=FixedRng(choices=[CoinSide.CARA, CoinSide.CARA]),
+        cooldown_seconds=0,
+    )
+
+    result = await service.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+    wallet = await repository.get_wallet(1, 10)
+
+    assert result.payout == 130
+    assert result.profit == 30
+    assert wallet.balance == 1030
+    with pytest.raises(CasinoValidationError, match="teto diario"):
+        await service.play_coin_flip(
+            guild_id=1,
+            user_id=10,
+            bet=100,
+            choice="cara",
+        )
+
+
+async def test_casino_profit_pressure_can_downgrade_coin_flip_win(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await repository.update_guild_settings(1, {"casino_daily_profit_limit": 5000})
+    await _seed_wallet(repository, balance=10000)
+    await repository.mutate_balance(
+        guild_id=1,
+        user_id=10,
+        amount=-100,
+        transaction_type=EconomyTransactionType.CASINO_BET,
+        actor_id=None,
+        reason="previous_bet",
+        metadata={"game": "coin_flip", "bet": 100},
+    )
+    await repository.mutate_balance(
+        guild_id=1,
+        user_id=10,
+        amount=2600,
+        transaction_type=EconomyTransactionType.CASINO_PAYOUT,
+        actor_id=None,
+        reason="previous_payout",
+        metadata={"game": "coin_flip", "bet": 100, "outcome": "WON"},
+    )
+    service = CasinoService(
+        repository,
+        rng=FixedRng(choices=[CoinSide.CARA], numbers=[1]),
+        cooldown_seconds=0,
+    )
+
+    result = await service.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+
+    assert result.outcome is CasinoOutcome.LOST
+    assert result.result_label == "Coroa"
+    assert result.payout == 0
+    assert result.wallet.balance == 12400
+
+
+async def test_casino_limiters_can_be_disabled(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await repository.update_guild_settings(
+        1,
+        {
+            "casino_daily_profit_limit": 30,
+            "casino_limiters_enabled": 0,
+        },
+    )
+    await _seed_wallet(repository, balance=10000)
+    await repository.mutate_balance(
+        guild_id=1,
+        user_id=10,
+        amount=-100,
+        transaction_type=EconomyTransactionType.CASINO_BET,
+        actor_id=None,
+        reason="previous_bet",
+        metadata={"game": "coin_flip", "bet": 100},
+    )
+    await repository.mutate_balance(
+        guild_id=1,
+        user_id=10,
+        amount=2600,
+        transaction_type=EconomyTransactionType.CASINO_PAYOUT,
+        actor_id=None,
+        reason="previous_payout",
+        metadata={"game": "coin_flip", "bet": 100, "outcome": "WON"},
+    )
+    service = CasinoService(
+        repository,
+        rng=FixedRng(choices=[CoinSide.CARA], numbers=[1]),
+        cooldown_seconds=0,
+    )
+
+    result = await service.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+
+    assert result.outcome is CasinoOutcome.WON
+    assert result.result_label == "Cara"
+    assert result.payout == 140
+    assert result.wallet.balance == 12540
 
 
 async def test_casino_cooldown_blocks_repeated_game(tmp_path: Path) -> None:

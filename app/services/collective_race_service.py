@@ -16,8 +16,13 @@ from app.models.game_progress import (
     CollectiveRaceSettlementResult,
 )
 from app.models.giveaway import utc_now
+from app.models.guild_settings import GuildEconomySettings
 from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.repositories.game_progress_repository import GameProgressRepositoryProtocol
+from app.services.economy_limits import (
+    apply_daily_casino_profit_cap,
+    current_daily_profit_window_start,
+)
 from app.services.game_progress_service import GameProgressService
 
 
@@ -33,7 +38,6 @@ class CollectiveRaceService:
     """Corrida coletiva de mascotes com apostas por janela de tempo."""
 
     MIN_STAKE = 1
-    MAX_STAKE = 100_000
     MIN_DURATION_SECONDS = 10
     MAX_DURATION_SECONDS = 3600
     PAYOUT_MULTIPLIER = 5
@@ -62,7 +66,12 @@ class CollectiveRaceService:
         channel_id: int | None = None,
         message_id: int | None = None,
     ) -> CollectiveRaceSession:
-        self._validate_stake(stake)
+        settings = await self._economy_repository.get_guild_settings(guild_id)
+        self._validate_stake(
+            stake,
+            settings.casino_min_bet_collective_race,
+            settings.casino_max_bet,
+        )
         self._validate_duration(duration_seconds)
         opened_at = utc_now()
         return await self._repository.create_collective_race(
@@ -112,6 +121,8 @@ class CollectiveRaceService:
                 raise CollectiveRaceValidationError(
                     "A janela de apostas desta corrida ja fechou."
                 )
+            settings = await self._economy_repository.get_guild_settings(guild_id)
+            await self._validate_daily_profit_limit(settings, guild_id, user_id)
             try:
                 debit = await self._economy_repository.mutate_balance(
                     guild_id=guild_id,
@@ -155,6 +166,7 @@ class CollectiveRaceService:
                 raise CollectiveRaceValidationError(str(exc)) from exc
 
         await self._progress_service.unlock(guild_id, user_id, "first_bet")
+        await self._progress_service.evaluate_user_milestones(guild_id, user_id)
         wallet = await self._economy_repository.get_wallet(guild_id, user_id)
         return CollectiveRacePlacementResult(race=race, bet=bet, wallet=wallet)
 
@@ -181,12 +193,16 @@ class CollectiveRaceService:
             total_refunded = 0
             for bet in bets:
                 if bet.status is CollectiveRaceBetStatus.WON:
-                    transaction_id = await self._pay_bet(bet)
-                    await self._repository.mark_collective_race_bet_paid(
-                        bet.id,
-                        transaction_id=transaction_id,
-                    )
-                    total_paid += bet.potential_payout
+                    if bet.payout_transaction_id is not None:
+                        paid_amount = 0
+                    else:
+                        transaction_id, paid_amount = await self._pay_bet(bet)
+                        if transaction_id is not None:
+                            await self._repository.mark_collective_race_bet_paid(
+                                bet.id,
+                                transaction_id=transaction_id,
+                            )
+                    total_paid += paid_amount
                     await self._progress_service.unlock(
                         bet.guild_id,
                         bet.user_id,
@@ -197,13 +213,23 @@ class CollectiveRaceService:
                         bet.user_id,
                         "collective_race_win",
                     )
+                    await self._progress_service.evaluate_user_milestones(
+                        bet.guild_id,
+                        bet.user_id,
+                    )
                 elif bet.status is CollectiveRaceBetStatus.LOST:
                     await self._progress_service.unlock(
                         bet.guild_id,
                         bet.user_id,
                         "first_loss",
                     )
+                    await self._progress_service.evaluate_user_milestones(
+                        bet.guild_id,
+                        bet.user_id,
+                    )
                 elif bet.status is CollectiveRaceBetStatus.REFUNDED:
+                    if bet.payout_transaction_id is not None:
+                        continue
                     transaction_id = await self._refund_bet(bet=bet)
                     await self._repository.mark_collective_race_bet_paid(
                         bet.id,
@@ -228,11 +254,22 @@ class CollectiveRaceService:
             total_refunded=total_refunded,
         )
 
-    async def _pay_bet(self, bet: CollectiveRaceBet) -> int:
+    async def _pay_bet(self, bet: CollectiveRaceBet) -> tuple[int | None, int]:
+        settings = await self._economy_repository.get_guild_settings(bet.guild_id)
+        payout = await apply_daily_casino_profit_cap(
+            self._economy_repository,
+            settings,
+            guild_id=bet.guild_id,
+            user_id=bet.user_id,
+            stake=bet.stake,
+            payout=bet.potential_payout,
+        )
+        if payout <= 0:
+            return None, 0
         result = await self._economy_repository.mutate_balance(
             guild_id=bet.guild_id,
             user_id=bet.user_id,
-            amount=bet.potential_payout,
+            amount=payout,
             transaction_type=EconomyTransactionType.CASINO_PAYOUT,
             actor_id=None,
             reason="collective_race_payout",
@@ -241,10 +278,11 @@ class CollectiveRaceService:
                 "race_id": bet.race_id,
                 "bet_id": bet.id,
                 "mascot": bet.mascot.value,
-                "payout": bet.potential_payout,
+                "payout": payout,
+                "uncapped_payout": bet.potential_payout,
             },
         )
-        return result.transaction.id
+        return result.transaction.id, payout
 
     async def _refund_bet(
         self,
@@ -310,11 +348,32 @@ class CollectiveRaceService:
             raise CollectiveRaceValidationError("Mascote invalido.") from exc
 
     @classmethod
-    def _validate_stake(cls, stake: int) -> None:
-        if stake < cls.MIN_STAKE:
-            raise CollectiveRaceValidationError(f"A aposta minima e {cls.MIN_STAKE}.")
-        if stake > cls.MAX_STAKE:
-            raise CollectiveRaceValidationError(f"A aposta maxima e {cls.MAX_STAKE}.")
+    def _validate_stake(cls, stake: int, min_stake: int, max_stake: int) -> None:
+        if stake < min_stake:
+            raise CollectiveRaceValidationError(f"A aposta minima e {min_stake}.")
+        if stake > max_stake:
+            raise CollectiveRaceValidationError(f"A aposta maxima e {max_stake}.")
+
+    async def _validate_daily_profit_limit(
+        self,
+        settings: GuildEconomySettings,
+        guild_id: int,
+        user_id: int,
+    ) -> None:
+        if (
+            not settings.casino_limiters_enabled
+            or settings.casino_daily_profit_limit <= 0
+        ):
+            return
+        current_profit = await self._economy_repository.get_user_casino_profit_since(
+            guild_id,
+            user_id,
+            current_daily_profit_window_start(),
+        )
+        if current_profit >= settings.casino_daily_profit_limit:
+            raise CollectiveRaceValidationError(
+                "Voce atingiu o teto diario de lucro dos jogos."
+            )
 
     @classmethod
     def _validate_duration(cls, duration_seconds: int) -> None:

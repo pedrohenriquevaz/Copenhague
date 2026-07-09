@@ -1,9 +1,60 @@
-version: "3.9"
-
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: copenhague-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-copenhague}
+      POSTGRES_USER: ${POSTGRES_USER:-copenhague}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-copenhague}
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./sql/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   discord-bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: copenhague-bot:local
     container_name: discord-bot
     restart: unless-stopped
+    init: true
     env_file:
       - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://copenhague:copenhague@postgres:5432/copenhague}
+      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-copenhague}
+      POSTGRES_POOL_MIN_SIZE: ${POSTGRES_POOL_MIN_SIZE:-2}
+      POSTGRES_POOL_MAX_SIZE: ${POSTGRES_POOL_MAX_SIZE:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres-data:

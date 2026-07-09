@@ -51,6 +51,16 @@ class ShopPurchaseStatus(StrEnum):
     LIMIT_REACHED = "LIMIT_REACHED"
 
 
+class LevelUpgradeStatus(StrEnum):
+    """Resultado de uma tentativa de subir de nivel."""
+
+    SUCCESS = "SUCCESS"
+    LEVEL_NOT_FOUND = "LEVEL_NOT_FOUND"
+    LEVEL_INACTIVE = "LEVEL_INACTIVE"
+    ALREADY_OWNED = "ALREADY_OWNED"
+    INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
+
+
 @dataclass(slots=True)
 class RewardItemCreate:
     """Dados para criar uma recompensa."""
@@ -114,6 +124,46 @@ class ShopPurchaseResult:
     status: ShopPurchaseStatus
     reward: RewardItem | None = None
     purchase: RewardPurchase | None = None
+    balance_before: int = 0
+    balance_after: int = 0
+    missing_points: int = 0
+
+
+@dataclass(slots=True)
+class LevelConfig:
+    """Nivel progressivo configurado para compra na loja."""
+
+    guild_id: int
+    level: int
+    role_id: int
+    price: int
+    is_active: bool
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class LevelUpgradePurchase:
+    """Compra imutavel de um nivel progressivo."""
+
+    id: int
+    guild_id: int
+    user_id: int
+    level: int
+    role_id: int
+    transaction_id: int
+    price_paid: int
+    created_at: datetime
+
+
+@dataclass(slots=True)
+class LevelUpgradeResult:
+    """Resultado completo da compra de upgrade de nivel."""
+
+    status: LevelUpgradeStatus
+    level_config: LevelConfig | None = None
+    purchase: LevelUpgradePurchase | None = None
     balance_before: int = 0
     balance_after: int = 0
     missing_points: int = 0

@@ -14,6 +14,11 @@ def test_settings_from_env_uses_required_and_default_values() -> None:
     assert settings.GUILD_ID is None
     assert settings.ENVIRONMENT == "development"
     assert settings.LOG_LEVEL == "INFO"
+    assert settings.DATABASE_BACKEND == "sqlite"
+    assert settings.GAME_PROGRESS_DB_BACKEND == "sqlite"
+    assert settings.POSTGRES_SCHEMA == "copenhague"
+    assert settings.POSTGRES_POOL_MIN_SIZE == 2
+    assert settings.POSTGRES_POOL_MAX_SIZE == 10
     assert settings.ENABLE_MEMBERS_INTENT is False
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is False
     assert Path(settings.GIVEAWAY_DB_PATH) == Path("data/giveaways.sqlite3")
@@ -30,6 +35,12 @@ def test_settings_from_env_parses_optional_values() -> None:
             "GUILD_ID": "123",
             "ENVIRONMENT": "production",
             "LOG_LEVEL": "debug",
+            "DATABASE_BACKEND": "postgres",
+            "POSTGRES_DSN": "postgresql://user:pass@db:5432/app",
+            "POSTGRES_SCHEMA": "custom_schema",
+            "POSTGRES_POOL_MIN_SIZE": "3",
+            "POSTGRES_POOL_MAX_SIZE": "12",
+            "GAME_PROGRESS_DB_BACKEND": "postgres",
             "ENABLE_MEMBERS_INTENT": "true",
             "ENABLE_MESSAGE_CONTENT_INTENT": "1",
             "GIVEAWAY_DB_PATH": "custom.sqlite3",
@@ -43,6 +54,12 @@ def test_settings_from_env_parses_optional_values() -> None:
     assert settings.GUILD_ID == 123
     assert settings.ENVIRONMENT == "production"
     assert settings.LOG_LEVEL == "DEBUG"
+    assert settings.DATABASE_BACKEND == "postgres"
+    assert settings.POSTGRES_DSN == "postgresql://user:pass@db:5432/app"
+    assert settings.POSTGRES_SCHEMA == "custom_schema"
+    assert settings.POSTGRES_POOL_MIN_SIZE == 3
+    assert settings.POSTGRES_POOL_MAX_SIZE == 12
+    assert settings.GAME_PROGRESS_DB_BACKEND == "postgres"
     assert settings.ENABLE_MEMBERS_INTENT is True
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is True
     assert settings.GIVEAWAY_DB_PATH == "custom.sqlite3"

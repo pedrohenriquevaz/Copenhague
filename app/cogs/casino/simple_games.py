@@ -6,16 +6,18 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from app.models.casino import CasinoGameResult, CasinoUserStats
+from app.models.casino import CasinoGameResult, CasinoGameType, CasinoUserStats
 from app.models.economy import EconomyTransaction
 from app.models.guild_settings import GuildEconomySettings
 from app.services.casino_service import CasinoService, CasinoValidationError
 from app.ui.casino_animation import (
     build_casino_animation_embed,
     casino_animation_for_game,
+    coin_flip_animation,
     play_casino_animation,
 )
 from app.ui.duel_view import DuelChallengeView, build_duel_invite_embed
+from app.ui.game_notifications import announce_game_result
 from app.utils.embeds import format_points
 
 
@@ -367,7 +369,10 @@ class CasinoGamesCog(commands.Cog):
         result: CasinoGameResult,
         settings: GuildEconomySettings,
     ) -> None:
-        animation = casino_animation_for_game(result.game_type)
+        if result.game_type is CasinoGameType.COIN_FLIP:
+            animation = coin_flip_animation(result.result_label)
+        else:
+            animation = casino_animation_for_game(result.game_type)
         message = await interaction.followup.send(
             embed=build_casino_animation_embed(animation),
             ephemeral=True,
@@ -381,6 +386,14 @@ class CasinoGamesCog(commands.Cog):
                 embed=build_casino_result_embed(result, settings),
                 ephemeral=True,
             )
+        await announce_game_result(
+            interaction,
+            user_id=result.user_id,
+            game_name=result.title,
+            stake=result.bet,
+            payout=result.payout,
+            settings=settings,
+        )
 
 
 def build_casino_result_embed(

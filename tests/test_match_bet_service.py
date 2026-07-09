@@ -101,6 +101,32 @@ async def test_match_bet_insufficient_balance_does_not_create_ticket(
     assert result.tickets == []
 
 
+async def test_match_bet_uses_configured_min_stake(tmp_path: Path) -> None:
+    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    await economy.update_guild_settings(1, {"casino_min_bet_match_bet": 150})
+    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    service = MatchBetService(repository, economy)
+    await _seed_wallet(economy, balance=1000)
+    match = await service.create_match(
+        guild_id=1,
+        title="Semi",
+        team_1="A",
+        team_2="B",
+        odd_team_1=1.80,
+        odd_team_2=1.90,
+        created_by=99,
+    )
+
+    with pytest.raises(MatchBetValidationError, match="aposta minima"):
+        await service.place_bet(
+            guild_id=1,
+            user_id=10,
+            match_id=match.id,
+            team="team_1",
+            stake=100,
+        )
+
+
 async def test_match_bet_cancel_refunds_open_tickets(tmp_path: Path) -> None:
     economy = SQLiteEconomyRepository(tmp_path / "economy.db")
     repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
@@ -134,6 +160,82 @@ async def test_match_bet_cancel_refunds_open_tickets(tmp_path: Path) -> None:
     assert result.total_refunded == 250
     assert result.tickets[0].status is MatchBetTicketStatus.REFUNDED
     assert wallet.balance == 1000
+
+
+async def test_match_bet_admin_summary(tmp_path: Path) -> None:
+    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    service = MatchBetService(repository, economy)
+    await _seed_wallet(economy, balance=1000)
+    match = await service.create_match(
+        guild_id=1,
+        title="Final",
+        team_1="A",
+        team_2="B",
+        odd_team_1=1.80,
+        odd_team_2=2.10,
+        created_by=99,
+    )
+
+    await service.place_bet(
+        guild_id=1,
+        user_id=10,
+        match_id=match.id,
+        team="team_1",
+        stake=100,
+    )
+
+    summary = await repository.get_admin_summary(1)
+
+    assert summary["total_matches"] == 1
+    assert summary["active_matches"] == 1
+    assert summary["total_tickets"] == 1
+    assert summary["open_tickets"] == 1
+    assert summary["total_stake"] == 100
+    assert summary["potential_payout"] == 180
+
+
+async def test_match_bet_reset_user_profile_clears_only_user_tickets(
+    tmp_path: Path,
+) -> None:
+    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    service = MatchBetService(repository, economy)
+    await _seed_wallet(economy, user_id=10, balance=1000)
+    await _seed_wallet(economy, user_id=20, balance=1000)
+    match = await service.create_match(
+        guild_id=1,
+        title="Final",
+        team_1="A",
+        team_2="B",
+        odd_team_1=1.80,
+        odd_team_2=2.10,
+        created_by=99,
+    )
+
+    await service.place_bet(
+        guild_id=1,
+        user_id=10,
+        match_id=match.id,
+        team="team_1",
+        stake=100,
+    )
+    await service.place_bet(
+        guild_id=1,
+        user_id=20,
+        match_id=match.id,
+        team="team_2",
+        stake=200,
+    )
+
+    counts = await repository.reset_user_profile(1, 10)
+    summary = await repository.get_admin_summary(1)
+
+    assert counts["match_bet_tickets"] == 1
+    assert summary["total_matches"] == 1
+    assert summary["total_tickets"] == 1
+    assert summary["open_tickets"] == 1
+    assert summary["total_stake"] == 200
 
 
 async def _seed_wallet(

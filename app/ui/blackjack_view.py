@@ -18,6 +18,7 @@ from app.ui.casino_animation import (
     build_casino_animation_embed,
     play_casino_animation,
 )
+from app.ui.game_notifications import announce_game_result
 from app.utils.embeds import format_points
 
 OUTCOME_TEXT = {
@@ -70,6 +71,18 @@ def build_blackjack_embed(
             value=format_points(session.bet, settings.currency_name),
             inline=True,
         )
+        if session.win_streak > 1:
+            multiplier = f"{session.payout_multiplier_percent / 100:.2f}x"
+            bonus = format_points(session.streak_bonus, settings.currency_name)
+            embed.add_field(
+                name="Winstreak",
+                value=(
+                    f"{session.win_streak} vitorias seguidas\n"
+                    f"Multiplicador: **{multiplier}**\n"
+                    f"Bonus: {bonus}"
+                ),
+                inline=False,
+            )
     else:
         embed.add_field(
             name="Aposta atual",
@@ -85,20 +98,25 @@ def build_blackjack_embed(
     return embed
 
 
-async def announce_blackjack_win(
+async def announce_blackjack_result(
     interaction: discord.Interaction,
     session: BlackjackSession,
     settings: GuildEconomySettings,
 ) -> None:
-    """Anuncia vitorias reais do BlackJack no canal."""
+    """Anuncia vitorias e derrotas expressivas do BlackJack no canal."""
 
-    if session.payout <= session.bet:
-        return
-
-    channel = interaction.channel
-    if channel is None or not hasattr(channel, "send"):
-        return
-
+    await announce_game_result(
+        interaction,
+        user_id=session.user_id,
+        game_name="BlackJack",
+        stake=session.bet,
+        payout=session.payout,
+        settings=settings,
+        win_streak=session.win_streak,
+        multiplier_percent=session.payout_multiplier_percent,
+    )
+    return
+    """
     try:
         await channel.send(
             "🎉 "
@@ -107,6 +125,7 @@ async def announce_blackjack_win(
         )
     except discord.HTTPException:
         return
+    """
 
 
 class BlackjackView(discord.ui.View):
@@ -241,7 +260,7 @@ class BlackjackView(discord.ui.View):
             )
 
         if self.session.is_finished:
-            await announce_blackjack_win(interaction, self.session, self.settings)
+            await announce_blackjack_result(interaction, self.session, self.settings)
 
     def _refresh_buttons(self) -> None:
         for item in self.children:

@@ -15,12 +15,19 @@ from app.models.economy import (
     BalanceMutationResult,
     EconomyTransaction,
     EconomyTransactionType,
+    UserGameProgressSummary,
+    UserProfileResetResult,
+    UserTransferResult,
     UserWallet,
 )
 from app.models.giveaway import parse_datetime, serialize_datetime, utc_now
 from app.models.guild_settings import GuildEconomySettings
 from app.models.shop import (
     DeliveryStatus,
+    LevelConfig,
+    LevelUpgradePurchase,
+    LevelUpgradeResult,
+    LevelUpgradeStatus,
     PurchaseStatus,
     RewardItem,
     RewardItemCreate,
@@ -44,9 +51,34 @@ class SQLiteEconomyRepository:
     async def get_guild_settings(self, guild_id: int) -> GuildEconomySettings:
         return await asyncio.to_thread(self._get_or_create_settings_sync, guild_id)
 
+    async def update_guild_settings(
+        self,
+        guild_id: int,
+        updates: dict[str, Any],
+    ) -> GuildEconomySettings:
+        return await asyncio.to_thread(
+            self._update_guild_settings_sync,
+            guild_id,
+            updates,
+        )
+
+    async def get_admin_summary(self, guild_id: int) -> dict[str, Any]:
+        return await asyncio.to_thread(self._get_admin_summary_sync, guild_id)
+
     async def get_wallet(self, guild_id: int, user_id: int) -> UserWallet:
         return await asyncio.to_thread(
             self._get_or_create_wallet_sync,
+            guild_id,
+            user_id,
+        )
+
+    async def reset_user_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> UserProfileResetResult:
+        return await asyncio.to_thread(
+            self._reset_user_profile_sync,
             guild_id,
             user_id,
         )
@@ -69,6 +101,42 @@ class SQLiteEconomyRepository:
             amount,
             transaction_type,
             actor_id,
+            reason,
+            metadata or {},
+        )
+
+    async def grant_achievement_reward_once(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        achievement_key: str,
+        amount: int,
+    ) -> BalanceMutationResult | None:
+        return await asyncio.to_thread(
+            self._grant_achievement_reward_once_sync,
+            guild_id,
+            user_id,
+            achievement_key,
+            amount,
+        )
+
+    async def transfer_balance(
+        self,
+        *,
+        guild_id: int,
+        sender_id: int,
+        receiver_id: int,
+        amount: int,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> UserTransferResult:
+        return await asyncio.to_thread(
+            self._transfer_balance_sync,
+            guild_id,
+            sender_id,
+            receiver_id,
+            amount,
             reason,
             metadata or {},
         )
@@ -97,6 +165,43 @@ class SQLiteEconomyRepository:
             self._list_casino_transactions_sync,
             guild_id,
             limit,
+        )
+
+    async def get_user_game_progress_summary(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> UserGameProgressSummary:
+        return await asyncio.to_thread(
+            self._get_user_game_progress_summary_sync,
+            guild_id,
+            user_id,
+        )
+
+    async def get_user_casino_profit_since(
+        self,
+        guild_id: int,
+        user_id: int,
+        since,
+    ) -> int:
+        return await asyncio.to_thread(
+            self._get_user_casino_profit_since_sync,
+            guild_id,
+            user_id,
+            serialize_datetime(since),
+        )
+
+    async def count_user_scratch_card_purchases_since(
+        self,
+        guild_id: int,
+        user_id: int,
+        since,
+    ) -> int:
+        return await asyncio.to_thread(
+            self._count_user_scratch_card_purchases_since_sync,
+            guild_id,
+            user_id,
+            serialize_datetime(since),
         )
 
     async def list_top_wallets(
@@ -220,6 +325,32 @@ class SQLiteEconomyRepository:
     async def get_reward(self, reward_id: int) -> RewardItem | None:
         return await asyncio.to_thread(self._get_reward_sync, reward_id)
 
+    async def update_reward(
+        self,
+        *,
+        guild_id: int,
+        reward_id: int,
+        updates: dict[str, Any],
+    ) -> RewardItem | None:
+        return await asyncio.to_thread(
+            self._update_reward_sync,
+            guild_id,
+            reward_id,
+            updates,
+        )
+
+    async def remove_reward(
+        self,
+        *,
+        guild_id: int,
+        reward_id: int,
+    ) -> RewardItem | None:
+        return await asyncio.to_thread(
+            self._remove_reward_sync,
+            guild_id,
+            reward_id,
+        )
+
     async def purchase_reward(
         self,
         *,
@@ -248,6 +379,74 @@ class SQLiteEconomyRepository:
             guild_id,
             user_id,
             limit,
+        )
+
+    async def upsert_level_config(
+        self,
+        *,
+        guild_id: int,
+        level: int,
+        role_id: int,
+        price: int,
+        is_active: bool,
+        created_by: int,
+    ) -> LevelConfig:
+        return await asyncio.to_thread(
+            self._upsert_level_config_sync,
+            guild_id,
+            level,
+            role_id,
+            price,
+            is_active,
+            created_by,
+        )
+
+    async def list_level_configs(
+        self,
+        guild_id: int,
+        *,
+        include_inactive: bool = False,
+    ) -> list[LevelConfig]:
+        return await asyncio.to_thread(
+            self._list_level_configs_sync,
+            guild_id,
+            include_inactive,
+        )
+
+    async def get_level_config(
+        self,
+        guild_id: int,
+        level: int,
+    ) -> LevelConfig | None:
+        return await asyncio.to_thread(
+            self._get_level_config_sync,
+            guild_id,
+            level,
+        )
+
+    async def list_user_level_upgrades(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> list[LevelUpgradePurchase]:
+        return await asyncio.to_thread(
+            self._list_user_level_upgrades_sync,
+            guild_id,
+            user_id,
+        )
+
+    async def purchase_level_upgrade(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        level: int,
+    ) -> LevelUpgradeResult:
+        return await asyncio.to_thread(
+            self._purchase_level_upgrade_sync,
+            guild_id,
+            user_id,
+            level,
         )
 
     def _connect(self) -> sqlite3.Connection:
@@ -279,11 +478,60 @@ class SQLiteEconomyRepository:
                         ignore_bots INTEGER NOT NULL DEFAULT 1,
                         count_voice_when_alone INTEGER NOT NULL DEFAULT 0,
                         max_admin_grant_per_use INTEGER NOT NULL DEFAULT 100000,
+                        casino_max_bet INTEGER NOT NULL DEFAULT 1000,
+                        casino_daily_profit_limit INTEGER NOT NULL DEFAULT 5000,
+                        casino_min_bet_coin_flip INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_dice INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_slot INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_roulette INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_mascot_race INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_duel INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_blackjack INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_scratch_card INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_collective_race INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_match_bet INTEGER NOT NULL DEFAULT 1,
+                        casino_limiters_enabled INTEGER NOT NULL DEFAULT 1,
                         economy_manager_role_id INTEGER,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     )
                     """)
+                self._ensure_column(
+                    connection,
+                    "guild_settings",
+                    "casino_max_bet",
+                    "INTEGER NOT NULL DEFAULT 1000",
+                )
+                self._ensure_column(
+                    connection,
+                    "guild_settings",
+                    "casino_daily_profit_limit",
+                    "INTEGER NOT NULL DEFAULT 5000",
+                )
+                self._ensure_column(
+                    connection,
+                    "guild_settings",
+                    "casino_limiters_enabled",
+                    "INTEGER NOT NULL DEFAULT 1",
+                )
+                for column in (
+                    "casino_min_bet_coin_flip",
+                    "casino_min_bet_dice",
+                    "casino_min_bet_slot",
+                    "casino_min_bet_roulette",
+                    "casino_min_bet_mascot_race",
+                    "casino_min_bet_duel",
+                    "casino_min_bet_blackjack",
+                    "casino_min_bet_scratch_card",
+                    "casino_min_bet_collective_race",
+                    "casino_min_bet_match_bet",
+                ):
+                    self._ensure_column(
+                        connection,
+                        "guild_settings",
+                        column,
+                        "INTEGER NOT NULL DEFAULT 1",
+                    )
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS user_wallets (
                         guild_id INTEGER NOT NULL,
@@ -407,6 +655,37 @@ class SQLiteEconomyRepository:
                     )
                     """)
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS shop_level_configs (
+                        guild_id INTEGER NOT NULL,
+                        level INTEGER NOT NULL,
+                        role_id INTEGER NOT NULL,
+                        price INTEGER NOT NULL,
+                        is_active INTEGER NOT NULL DEFAULT 1,
+                        created_by INTEGER NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (guild_id, level),
+                        UNIQUE(guild_id, role_id)
+                    )
+                    """)
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS user_level_upgrades (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        guild_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        level INTEGER NOT NULL,
+                        role_id INTEGER NOT NULL,
+                        transaction_id INTEGER NOT NULL,
+                        price_paid INTEGER NOT NULL,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY(guild_id, level)
+                            REFERENCES shop_level_configs(guild_id, level),
+                        FOREIGN KEY(transaction_id)
+                            REFERENCES economy_transactions(id),
+                        UNIQUE(guild_id, user_id, level)
+                    )
+                    """)
+                connection.execute("""
                     CREATE TABLE IF NOT EXISTS admin_audit_logs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         guild_id INTEGER NOT NULL,
@@ -453,6 +732,14 @@ class SQLiteEconomyRepository:
                     CREATE INDEX IF NOT EXISTS idx_reward_purchases_reward_user
                     ON reward_purchases(guild_id, reward_id, user_id)
                     """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_shop_level_configs_active
+                    ON shop_level_configs(guild_id, is_active, level)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_user_level_upgrades_user
+                    ON user_level_upgrades(guild_id, user_id, level)
+                    """)
 
     def _get_or_create_settings_sync(self, guild_id: int) -> GuildEconomySettings:
         with self._lock:
@@ -471,6 +758,284 @@ class SQLiteEconomyRepository:
         if row is None:
             raise RuntimeError("Nao foi possivel criar configuracao da guild.")
         return self._row_to_settings(row)
+
+    def _update_guild_settings_sync(
+        self,
+        guild_id: int,
+        updates: dict[str, Any],
+    ) -> GuildEconomySettings:
+        allowed_columns = {
+            "currency_name",
+            "voice_points_per_minute",
+            "message_points",
+            "activity_provider",
+            "economy_channel_id",
+            "shop_channel_id",
+            "staff_log_channel_id",
+            "min_voice_seconds_to_claim",
+            "min_messages_to_claim",
+            "ignore_afk_channel",
+            "ignore_bots",
+            "count_voice_when_alone",
+            "max_admin_grant_per_use",
+            "casino_max_bet",
+            "casino_daily_profit_limit",
+            "casino_min_bet_coin_flip",
+            "casino_min_bet_dice",
+            "casino_min_bet_slot",
+            "casino_min_bet_roulette",
+            "casino_min_bet_mascot_race",
+            "casino_min_bet_duel",
+            "casino_min_bet_blackjack",
+            "casino_min_bet_scratch_card",
+            "casino_min_bet_collective_race",
+            "casino_min_bet_match_bet",
+            "casino_limiters_enabled",
+            "economy_manager_role_id",
+        }
+        assignments: list[str] = []
+        params: list[Any] = []
+        for key, value in updates.items():
+            if key not in allowed_columns:
+                continue
+            assignments.append(f"{key} = ?")
+            params.append(value)
+
+        if not assignments:
+            return self._get_or_create_settings_sync(guild_id)
+
+        now = serialize_datetime(utc_now())
+        assignments.append("updated_at = ?")
+        params.extend([now, guild_id])
+
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                self._ensure_settings(connection, guild_id)
+                connection.execute(
+                    f"""
+                    UPDATE guild_settings
+                    SET {", ".join(assignments)}
+                    WHERE guild_id = ?
+                    """,
+                    params,
+                )
+                connection.commit()
+
+        return self._get_or_create_settings_sync(guild_id)
+
+    def _get_admin_summary_sync(self, guild_id: int) -> dict[str, Any]:
+        with self._lock:
+            with self._connect() as connection:
+                wallet_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS wallet_count,
+                        COALESCE(SUM(balance), 0) AS total_balance,
+                        COALESCE(SUM(total_earned), 0) AS total_earned,
+                        COALESCE(SUM(total_spent), 0) AS total_spent
+                    FROM user_wallets
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                transaction_rows = connection.execute(
+                    """
+                    SELECT
+                        type,
+                        COUNT(*) AS transaction_count,
+                        COALESCE(SUM(amount), 0) AS net_amount,
+                        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0)
+                            AS total_in,
+                        COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0)
+                            AS total_out
+                    FROM economy_transactions
+                    WHERE guild_id = ?
+                    GROUP BY type
+                    ORDER BY type ASC
+                    """,
+                    (guild_id,),
+                ).fetchall()
+                shop_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS rewards_total,
+                        COALESCE(SUM(CASE
+                            WHEN is_active = 1 AND deleted_at IS NULL THEN 1
+                            ELSE 0
+                        END), 0) AS rewards_active,
+                        COALESCE(SUM(CASE
+                            WHEN is_active = 0 AND deleted_at IS NULL THEN 1
+                            ELSE 0
+                        END), 0) AS rewards_inactive,
+                        COALESCE(SUM(CASE
+                            WHEN deleted_at IS NOT NULL THEN 1
+                            ELSE 0
+                        END), 0) AS rewards_removed
+                    FROM reward_items
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                purchase_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS purchase_count,
+                        COALESCE(SUM(price_paid), 0) AS purchase_volume
+                    FROM reward_purchases
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                audit_row = connection.execute(
+                    """
+                    SELECT COUNT(*) AS audit_count
+                    FROM admin_audit_logs
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                activity_row = connection.execute(
+                    """
+                    SELECT
+                        COALESCE(SUM(message_count), 0) AS total_messages,
+                        COUNT(DISTINCT user_id) AS message_users
+                    FROM native_message_stats
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                voice_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS voice_sessions,
+                        COALESCE(SUM(COALESCE(duration_seconds, 0)), 0)
+                            AS voice_seconds
+                    FROM native_voice_sessions
+                    WHERE guild_id = ?
+                      AND is_valid = 1
+                    """,
+                    (guild_id,),
+                ).fetchone()
+
+        transactions = {
+            str(row["type"]): {
+                "count": int(row["transaction_count"] or 0),
+                "net": int(row["net_amount"] or 0),
+                "in": int(row["total_in"] or 0),
+                "out": int(row["total_out"] or 0),
+            }
+            for row in transaction_rows
+        }
+        return {
+            "wallets": {
+                "count": int(wallet_row["wallet_count"] or 0),
+                "balance": int(wallet_row["total_balance"] or 0),
+                "earned": int(wallet_row["total_earned"] or 0),
+                "spent": int(wallet_row["total_spent"] or 0),
+            },
+            "transactions": transactions,
+            "shop": {
+                "rewards_total": int(shop_row["rewards_total"] or 0),
+                "rewards_active": int(shop_row["rewards_active"] or 0),
+                "rewards_inactive": int(shop_row["rewards_inactive"] or 0),
+                "rewards_removed": int(shop_row["rewards_removed"] or 0),
+                "purchase_count": int(purchase_row["purchase_count"] or 0),
+                "purchase_volume": int(purchase_row["purchase_volume"] or 0),
+            },
+            "audit": {
+                "count": int(audit_row["audit_count"] or 0),
+            },
+            "activity": {
+                "messages": int(activity_row["total_messages"] or 0),
+                "message_users": int(activity_row["message_users"] or 0),
+                "voice_sessions": int(voice_row["voice_sessions"] or 0),
+                "voice_seconds": int(voice_row["voice_seconds"] or 0),
+            },
+        }
+
+    def _reset_user_profile_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> UserProfileResetResult:
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                wallet_row = self._get_wallet_row(connection, guild_id, user_id)
+                wallet_before = (
+                    self._row_to_wallet(wallet_row) if wallet_row is not None else None
+                )
+
+                deleted_purchases = connection.execute(
+                    """
+                    DELETE FROM reward_purchases
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_level_upgrades = connection.execute(
+                    """
+                    DELETE FROM user_level_upgrades
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_reward_claims = connection.execute(
+                    """
+                    DELETE FROM economy_reward_claims
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_activity_cursors = connection.execute(
+                    """
+                    DELETE FROM activity_claim_cursors
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_message_stats = connection.execute(
+                    """
+                    DELETE FROM native_message_stats
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_voice_sessions = connection.execute(
+                    """
+                    DELETE FROM native_voice_sessions
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_transactions = connection.execute(
+                    """
+                    DELETE FROM economy_transactions
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_wallets = connection.execute(
+                    """
+                    DELETE FROM user_wallets
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                connection.commit()
+
+        return UserProfileResetResult(
+            wallet_before=wallet_before,
+            deleted_transactions=max(0, deleted_transactions),
+            deleted_reward_claims=max(0, deleted_reward_claims),
+            deleted_activity_cursors=max(0, deleted_activity_cursors),
+            deleted_message_stats=max(0, deleted_message_stats),
+            deleted_voice_sessions=max(0, deleted_voice_sessions),
+            deleted_purchases=max(0, deleted_purchases),
+            deleted_wallets=max(0, deleted_wallets),
+            deleted_level_upgrades=max(0, deleted_level_upgrades),
+        )
 
     def _get_or_create_wallet_sync(self, guild_id: int, user_id: int) -> UserWallet:
         with self._lock:
@@ -540,6 +1105,180 @@ class SQLiteEconomyRepository:
         wallet = self._get_or_create_wallet_sync(guild_id, user_id)
         return BalanceMutationResult(wallet=wallet, transaction=transaction)
 
+    def _grant_achievement_reward_once_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        achievement_key: str,
+        amount: int,
+    ) -> BalanceMutationResult | None:
+        if amount <= 0:
+            return None
+
+        reward_key = f"achievement:{achievement_key}"
+        now = serialize_datetime(utc_now())
+
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                claim_row = self._get_reward_claim_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                    reward_key,
+                )
+                if claim_row is not None and int(claim_row["claim_count"]) > 0:
+                    connection.rollback()
+                    return None
+
+                if self._has_achievement_reward_transaction(
+                    connection,
+                    guild_id,
+                    user_id,
+                    achievement_key,
+                ):
+                    self._upsert_reward_claim(
+                        connection,
+                        guild_id=guild_id,
+                        user_id=user_id,
+                        reward_key=reward_key,
+                        claim_date=None,
+                        now=now,
+                    )
+                    connection.commit()
+                    return None
+
+                wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                balance_before = int(wallet_row["balance"])
+                balance_after = balance_before + amount
+                connection.execute(
+                    """
+                    UPDATE user_wallets
+                    SET balance = ?,
+                        total_earned = total_earned + ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (balance_after, amount, now, guild_id, user_id),
+                )
+                transaction = self._insert_transaction(
+                    connection,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    actor_id=None,
+                    transaction_type=EconomyTransactionType.SYSTEM_ADJUSTMENT,
+                    amount=amount,
+                    balance_before=balance_before,
+                    balance_after=balance_after,
+                    reason="achievement_reward",
+                    metadata={"achievement_key": achievement_key},
+                    created_at=now,
+                )
+                self._upsert_reward_claim(
+                    connection,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    reward_key=reward_key,
+                    claim_date=None,
+                    now=now,
+                )
+                connection.commit()
+
+        wallet = self._get_or_create_wallet_sync(guild_id, user_id)
+        return BalanceMutationResult(wallet=wallet, transaction=transaction)
+
+    def _transfer_balance_sync(
+        self,
+        guild_id: int,
+        sender_id: int,
+        receiver_id: int,
+        amount: int,
+        reason: str,
+        metadata: dict[str, Any],
+    ) -> UserTransferResult:
+        if amount <= 0:
+            raise ValueError("A quantidade precisa ser maior que zero.")
+        if sender_id == receiver_id:
+            raise ValueError("Voce nao pode transferir pontos para si mesmo.")
+
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                sender_row = self._ensure_wallet(connection, guild_id, sender_id)
+                receiver_row = self._ensure_wallet(connection, guild_id, receiver_id)
+                sender_balance_before = int(sender_row["balance"])
+                receiver_balance_before = int(receiver_row["balance"])
+                if sender_balance_before < amount:
+                    connection.rollback()
+                    raise ValueError("Saldo insuficiente para essa transferencia.")
+
+                now = serialize_datetime(utc_now())
+                sender_balance_after = sender_balance_before - amount
+                receiver_balance_after = receiver_balance_before + amount
+                connection.execute(
+                    """
+                    UPDATE user_wallets
+                    SET balance = ?,
+                        total_spent = total_spent + ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (sender_balance_after, amount, now, guild_id, sender_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE user_wallets
+                    SET balance = ?,
+                        total_earned = total_earned + ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (receiver_balance_after, amount, now, guild_id, receiver_id),
+                )
+                sender_transaction = self._insert_transaction(
+                    connection,
+                    guild_id=guild_id,
+                    user_id=sender_id,
+                    actor_id=sender_id,
+                    transaction_type=EconomyTransactionType.USER_TRANSFER,
+                    amount=-amount,
+                    balance_before=sender_balance_before,
+                    balance_after=sender_balance_after,
+                    reason=reason,
+                    metadata={
+                        **metadata,
+                        "direction": "sent",
+                        "receiver_id": receiver_id,
+                    },
+                    created_at=now,
+                )
+                receiver_transaction = self._insert_transaction(
+                    connection,
+                    guild_id=guild_id,
+                    user_id=receiver_id,
+                    actor_id=sender_id,
+                    transaction_type=EconomyTransactionType.USER_TRANSFER,
+                    amount=amount,
+                    balance_before=receiver_balance_before,
+                    balance_after=receiver_balance_after,
+                    reason=reason,
+                    metadata={
+                        **metadata,
+                        "direction": "received",
+                        "sender_id": sender_id,
+                    },
+                    created_at=now,
+                )
+                connection.commit()
+
+        return UserTransferResult(
+            sender_wallet=self._get_or_create_wallet_sync(guild_id, sender_id),
+            receiver_wallet=self._get_or_create_wallet_sync(guild_id, receiver_id),
+            sender_transaction=sender_transaction,
+            receiver_transaction=receiver_transaction,
+            amount=amount,
+        )
+
     def _list_transactions_sync(
         self,
         guild_id: int,
@@ -560,6 +1299,55 @@ class SQLiteEconomyRepository:
                 ).fetchall()
         return [self._row_to_transaction(row) for row in rows]
 
+    def _get_user_casino_profit_since_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        since: str,
+    ) -> int:
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT COALESCE(SUM(amount), 0) AS net_profit
+                    FROM economy_transactions
+                    WHERE guild_id = ?
+                      AND user_id = ?
+                      AND created_at >= ?
+                      AND type IN (
+                          'CASINO_BET',
+                          'CASINO_PAYOUT',
+                          'MATCH_BET',
+                          'MATCH_BET_PAYOUT',
+                          'REFUND'
+                      )
+                    """,
+                    (guild_id, user_id, since),
+                ).fetchone()
+        return int(row["net_profit"] or 0)
+
+    def _count_user_scratch_card_purchases_since_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        since: str,
+    ) -> int:
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT COUNT(*) AS purchase_count
+                    FROM economy_transactions
+                    WHERE guild_id = ?
+                      AND user_id = ?
+                      AND created_at >= ?
+                      AND type = 'CASINO_BET'
+                      AND reason = 'scratch_card_bet'
+                    """,
+                    (guild_id, user_id, since),
+                ).fetchone()
+        return int(row["purchase_count"] or 0)
+
     def _list_casino_transactions_sync(
         self,
         guild_id: int,
@@ -579,6 +1367,108 @@ class SQLiteEconomyRepository:
                     (guild_id, max(1, min(limit, 1000))),
                 ).fetchall()
         return [self._row_to_transaction(row) for row in rows]
+
+    def _get_user_game_progress_summary_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> UserGameProgressSummary:
+        with self._lock:
+            with self._connect() as connection:
+                wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                rows = connection.execute(
+                    """
+                    SELECT *
+                    FROM economy_transactions
+                    WHERE guild_id = ?
+                      AND user_id = ?
+                      AND type IN ('CASINO_BET', 'CASINO_PAYOUT', 'REFUND')
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (guild_id, user_id),
+                ).fetchall()
+
+        transactions = [self._row_to_transaction(row) for row in rows]
+        total_games_played = 0
+        total_wins = 0
+        total_wagered = 0
+        total_payout = 0
+        net_profit = 0
+        biggest_win = 0
+        duel_games = 0
+        duel_wins = 0
+        collective_race_wins = 0
+        scratch_plays = 0
+        scratch_wins = 0
+        blackjack_best_streak = 0
+
+        for transaction in transactions:
+            game = str(transaction.metadata.get("game") or "")
+            if transaction.type is EconomyTransactionType.CASINO_BET:
+                amount = abs(transaction.amount)
+                total_wagered += amount
+                net_profit += transaction.amount
+                if transaction.reason != "blackjack_double":
+                    total_games_played += 1
+                if game == "duel":
+                    duel_games += 1
+                elif game == "scratch_card":
+                    scratch_plays += 1
+                continue
+
+            if transaction.type is EconomyTransactionType.REFUND:
+                net_profit += transaction.amount
+                continue
+
+            if transaction.type is not EconomyTransactionType.CASINO_PAYOUT:
+                continue
+
+            payout = max(transaction.amount, 0)
+            total_payout += payout
+            net_profit += transaction.amount
+            if payout <= 0:
+                continue
+
+            outcome = str(transaction.metadata.get("outcome") or "")
+            is_winning_payout = outcome in {
+                "PLAYER_BLACKJACK",
+                "PLAYER_WIN",
+                "WON",
+            } or (not outcome and game in {"collective_race", "scratch_card"})
+            if not is_winning_payout:
+                continue
+
+            total_wins += 1
+            biggest_win = max(biggest_win, payout)
+            if game == "duel":
+                duel_wins += 1
+            elif game == "collective_race":
+                collective_race_wins += 1
+            elif game == "scratch_card":
+                scratch_wins += 1
+
+            raw_streak = transaction.metadata.get("win_streak")
+            if raw_streak is not None:
+                try:
+                    blackjack_best_streak = max(blackjack_best_streak, int(raw_streak))
+                except (TypeError, ValueError):
+                    pass
+
+        return UserGameProgressSummary(
+            wallet=self._row_to_wallet(wallet_row),
+            total_games_played=total_games_played,
+            total_wins=total_wins,
+            total_wagered=total_wagered,
+            total_payout=total_payout,
+            net_profit=net_profit,
+            biggest_win=biggest_win,
+            duel_games=duel_games,
+            duel_wins=duel_wins,
+            collective_race_wins=collective_race_wins,
+            scratch_plays=scratch_plays,
+            scratch_wins=scratch_wins,
+            blackjack_best_streak=blackjack_best_streak,
+        )
 
     def _list_top_wallets_sync(self, guild_id: int, limit: int) -> list[UserWallet]:
         with self._lock:
@@ -679,38 +1569,23 @@ class SQLiteEconomyRepository:
                     if not once and row["last_claim_date"] == claim_date:
                         connection.rollback()
                         return False
-                    connection.execute(
-                        """
-                        UPDATE economy_reward_claims
-                        SET last_claimed_at = ?,
-                            last_claim_date = ?,
-                            claim_count = ?
-                        WHERE guild_id = ?
-                          AND user_id = ?
-                          AND reward_key = ?
-                        """,
-                        (
-                            now,
-                            claim_date,
-                            claim_count + 1,
-                            guild_id,
-                            user_id,
-                            reward_key,
-                        ),
+                    self._update_reward_claim(
+                        connection,
+                        guild_id=guild_id,
+                        user_id=user_id,
+                        reward_key=reward_key,
+                        claim_date=claim_date,
+                        claim_count=claim_count + 1,
+                        now=now,
                     )
                 else:
-                    connection.execute(
-                        """
-                        INSERT INTO economy_reward_claims (
-                            guild_id,
-                            user_id,
-                            reward_key,
-                            last_claimed_at,
-                            last_claim_date,
-                            claim_count
-                        ) VALUES (?, ?, ?, ?, ?, 1)
-                        """,
-                        (guild_id, user_id, reward_key, now, claim_date),
+                    self._insert_reward_claim(
+                        connection,
+                        guild_id=guild_id,
+                        user_id=user_id,
+                        reward_key=reward_key,
+                        claim_date=claim_date,
+                        now=now,
                     )
                 connection.commit()
         return True
@@ -1062,6 +1937,7 @@ class SQLiteEconomyRepository:
                         SELECT *
                         FROM reward_items
                         WHERE guild_id = ?
+                          AND deleted_at IS NULL
                         ORDER BY is_active DESC, price ASC, id ASC
                         """,
                         (guild_id,),
@@ -1092,6 +1968,90 @@ class SQLiteEconomyRepository:
                     (reward_id,),
                 ).fetchone()
         return self._row_to_reward(row) if row else None
+
+    def _update_reward_sync(
+        self,
+        guild_id: int,
+        reward_id: int,
+        updates: dict[str, Any],
+    ) -> RewardItem | None:
+        allowed_columns = {
+            "name": "name",
+            "description": "description",
+            "type": "type",
+            "price": "price",
+            "stock_quantity": "stock_quantity",
+            "stock_mode": "stock_mode",
+            "max_per_user": "max_per_user",
+            "role_id": "role_id",
+            "delivery_message": "delivery_message",
+            "is_active": "is_active",
+        }
+        assignments: list[str] = []
+        params: list[Any] = []
+        for key, value in updates.items():
+            column = allowed_columns.get(key)
+            if column is None:
+                continue
+            assignments.append(f"{column} = ?")
+            params.append(value)
+
+        if not assignments:
+            reward = self._get_reward_sync(reward_id)
+            return reward if reward and reward.guild_id == guild_id else None
+
+        now = serialize_datetime(utc_now())
+        assignments.append("updated_at = ?")
+        params.append(now)
+        params.extend([reward_id, guild_id])
+
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    f"""
+                    UPDATE reward_items
+                    SET {", ".join(assignments)}
+                    WHERE id = ?
+                      AND guild_id = ?
+                      AND deleted_at IS NULL
+                    """,
+                    params,
+                )
+                if cursor.rowcount == 0:
+                    connection.rollback()
+                    return None
+                connection.commit()
+
+        return self._get_reward_sync(reward_id)
+
+    def _remove_reward_sync(
+        self,
+        guild_id: int,
+        reward_id: int,
+    ) -> RewardItem | None:
+        now = serialize_datetime(utc_now())
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    """
+                    UPDATE reward_items
+                    SET is_active = 0,
+                        deleted_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                      AND guild_id = ?
+                      AND deleted_at IS NULL
+                    """,
+                    (now, now, reward_id, guild_id),
+                )
+                if cursor.rowcount == 0:
+                    connection.rollback()
+                    return None
+                connection.commit()
+
+        return self._get_reward_sync(reward_id)
 
     def _purchase_reward_sync(
         self,
@@ -1286,6 +2246,270 @@ class SQLiteEconomyRepository:
                 ).fetchone()
         return self._row_to_purchase(row) if row else None
 
+    def _upsert_level_config_sync(
+        self,
+        guild_id: int,
+        level: int,
+        role_id: int,
+        price: int,
+        is_active: bool,
+        created_by: int,
+    ) -> LevelConfig:
+        now = serialize_datetime(utc_now())
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO shop_level_configs (
+                        guild_id,
+                        level,
+                        role_id,
+                        price,
+                        is_active,
+                        created_by,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(guild_id, level) DO UPDATE SET
+                        role_id = excluded.role_id,
+                        price = excluded.price,
+                        is_active = excluded.is_active,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        guild_id,
+                        level,
+                        role_id,
+                        price,
+                        int(is_active),
+                        created_by,
+                        now,
+                        now,
+                    ),
+                )
+                connection.commit()
+
+        config = self._get_level_config_sync(guild_id, level)
+        if config is None:
+            raise RuntimeError("Nao foi possivel recuperar o nivel configurado.")
+        return config
+
+    def _list_level_configs_sync(
+        self,
+        guild_id: int,
+        include_inactive: bool,
+    ) -> list[LevelConfig]:
+        with self._lock:
+            with self._connect() as connection:
+                if include_inactive:
+                    rows = connection.execute(
+                        """
+                        SELECT *
+                        FROM shop_level_configs
+                        WHERE guild_id = ?
+                        ORDER BY level ASC
+                        """,
+                        (guild_id,),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        """
+                        SELECT *
+                        FROM shop_level_configs
+                        WHERE guild_id = ?
+                          AND is_active = 1
+                        ORDER BY level ASC
+                        """,
+                        (guild_id,),
+                    ).fetchall()
+        return [self._row_to_level_config(row) for row in rows]
+
+    def _get_level_config_sync(
+        self,
+        guild_id: int,
+        level: int,
+    ) -> LevelConfig | None:
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT *
+                    FROM shop_level_configs
+                    WHERE guild_id = ? AND level = ?
+                    """,
+                    (guild_id, level),
+                ).fetchone()
+        return self._row_to_level_config(row) if row else None
+
+    def _list_user_level_upgrades_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> list[LevelUpgradePurchase]:
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT *
+                    FROM user_level_upgrades
+                    WHERE guild_id = ? AND user_id = ?
+                    ORDER BY level ASC, id ASC
+                    """,
+                    (guild_id, user_id),
+                ).fetchall()
+        return [self._row_to_level_purchase(row) for row in rows]
+
+    def _purchase_level_upgrade_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        level: int,
+    ) -> LevelUpgradeResult:
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                level_row = connection.execute(
+                    """
+                    SELECT *
+                    FROM shop_level_configs
+                    WHERE guild_id = ? AND level = ?
+                    """,
+                    (guild_id, level),
+                ).fetchone()
+                if level_row is None:
+                    connection.rollback()
+                    return LevelUpgradeResult(
+                        status=LevelUpgradeStatus.LEVEL_NOT_FOUND,
+                    )
+
+                level_config = self._row_to_level_config(level_row)
+                if not level_config.is_active:
+                    connection.rollback()
+                    return LevelUpgradeResult(
+                        status=LevelUpgradeStatus.LEVEL_INACTIVE,
+                        level_config=level_config,
+                    )
+
+                existing = connection.execute(
+                    """
+                    SELECT 1
+                    FROM user_level_upgrades
+                    WHERE guild_id = ? AND user_id = ? AND level = ?
+                    """,
+                    (guild_id, user_id, level),
+                ).fetchone()
+                if existing is not None:
+                    connection.rollback()
+                    return LevelUpgradeResult(
+                        status=LevelUpgradeStatus.ALREADY_OWNED,
+                        level_config=level_config,
+                    )
+
+                wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                balance_before = int(wallet_row["balance"])
+                if balance_before < level_config.price:
+                    connection.rollback()
+                    return LevelUpgradeResult(
+                        status=LevelUpgradeStatus.INSUFFICIENT_BALANCE,
+                        level_config=level_config,
+                        balance_before=balance_before,
+                        balance_after=balance_before,
+                        missing_points=level_config.price - balance_before,
+                    )
+
+                now = serialize_datetime(utc_now())
+                balance_after = balance_before - level_config.price
+                connection.execute(
+                    """
+                    UPDATE user_wallets
+                    SET balance = ?,
+                        total_spent = total_spent + ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (
+                        balance_after,
+                        level_config.price,
+                        now,
+                        guild_id,
+                        user_id,
+                    ),
+                )
+                transaction = self._insert_transaction(
+                    connection,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    actor_id=user_id,
+                    transaction_type=EconomyTransactionType.LEVEL_UPGRADE,
+                    amount=-level_config.price,
+                    balance_before=balance_before,
+                    balance_after=balance_after,
+                    reason=f"level_upgrade:{level_config.level}",
+                    metadata={
+                        "level": level_config.level,
+                        "role_id": level_config.role_id,
+                    },
+                    created_at=now,
+                )
+                try:
+                    purchase_cursor = connection.execute(
+                        """
+                        INSERT INTO user_level_upgrades (
+                            guild_id,
+                            user_id,
+                            level,
+                            role_id,
+                            transaction_id,
+                            price_paid,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            guild_id,
+                            user_id,
+                            level_config.level,
+                            level_config.role_id,
+                            transaction.id,
+                            level_config.price,
+                            now,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    connection.rollback()
+                    return LevelUpgradeResult(
+                        status=LevelUpgradeStatus.ALREADY_OWNED,
+                        level_config=level_config,
+                    )
+                connection.commit()
+
+        purchase = self._get_level_purchase_sync(int(purchase_cursor.lastrowid))
+        if purchase is None:
+            raise RuntimeError("Nao foi possivel recuperar a compra de nivel.")
+        return LevelUpgradeResult(
+            status=LevelUpgradeStatus.SUCCESS,
+            level_config=level_config,
+            purchase=purchase,
+            balance_before=balance_before,
+            balance_after=balance_after,
+        )
+
+    def _get_level_purchase_sync(
+        self,
+        purchase_id: int,
+    ) -> LevelUpgradePurchase | None:
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT *
+                    FROM user_level_upgrades
+                    WHERE id = ?
+                    """,
+                    (purchase_id,),
+                ).fetchone()
+        return self._row_to_level_purchase(row) if row else None
+
     @staticmethod
     def _get_settings_row(
         connection: sqlite3.Connection,
@@ -1321,6 +2545,18 @@ class SQLiteEconomyRepository:
         if row is None:
             raise RuntimeError("Nao foi possivel criar configuracao da guild.")
         return row
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        columns = connection.execute(f"PRAGMA table_info({table})").fetchall()
+        if any(existing["name"] == column for existing in columns):
+            return
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @staticmethod
     def _get_wallet_row(
@@ -1400,6 +2636,136 @@ class SQLiteEconomyRepository:
         if row is None:
             raise RuntimeError("Nao foi possivel criar cursor.")
         return row
+
+    @staticmethod
+    def _get_reward_claim_row(
+        connection: sqlite3.Connection,
+        guild_id: int,
+        user_id: int,
+        reward_key: str,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT last_claim_date, claim_count
+            FROM economy_reward_claims
+            WHERE guild_id = ?
+              AND user_id = ?
+              AND reward_key = ?
+            """,
+            (guild_id, user_id, reward_key),
+        ).fetchone()
+
+    def _insert_reward_claim(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        guild_id: int,
+        user_id: int,
+        reward_key: str,
+        claim_date: str | None,
+        now: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO economy_reward_claims (
+                guild_id,
+                user_id,
+                reward_key,
+                last_claimed_at,
+                last_claim_date,
+                claim_count
+            ) VALUES (?, ?, ?, ?, ?, 1)
+            """,
+            (guild_id, user_id, reward_key, now, claim_date),
+        )
+
+    def _update_reward_claim(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        guild_id: int,
+        user_id: int,
+        reward_key: str,
+        claim_date: str | None,
+        claim_count: int,
+        now: str,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE economy_reward_claims
+            SET last_claimed_at = ?,
+                last_claim_date = ?,
+                claim_count = ?
+            WHERE guild_id = ?
+              AND user_id = ?
+              AND reward_key = ?
+            """,
+            (
+                now,
+                claim_date,
+                claim_count,
+                guild_id,
+                user_id,
+                reward_key,
+            ),
+        )
+
+    def _upsert_reward_claim(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        guild_id: int,
+        user_id: int,
+        reward_key: str,
+        claim_date: str | None,
+        now: str,
+    ) -> None:
+        row = self._get_reward_claim_row(connection, guild_id, user_id, reward_key)
+        if row is None:
+            self._insert_reward_claim(
+                connection,
+                guild_id=guild_id,
+                user_id=user_id,
+                reward_key=reward_key,
+                claim_date=claim_date,
+                now=now,
+            )
+            return
+        self._update_reward_claim(
+            connection,
+            guild_id=guild_id,
+            user_id=user_id,
+            reward_key=reward_key,
+            claim_date=claim_date,
+            claim_count=max(1, int(row["claim_count"])),
+            now=now,
+        )
+
+    @staticmethod
+    def _has_achievement_reward_transaction(
+        connection: sqlite3.Connection,
+        guild_id: int,
+        user_id: int,
+        achievement_key: str,
+    ) -> bool:
+        rows = connection.execute(
+            """
+            SELECT metadata_json
+            FROM economy_transactions
+            WHERE guild_id = ?
+              AND user_id = ?
+              AND reason = 'achievement_reward'
+            """,
+            (guild_id, user_id),
+        ).fetchall()
+        for row in rows:
+            try:
+                metadata = json.loads(str(row["metadata_json"] or "{}"))
+            except json.JSONDecodeError:
+                continue
+            if metadata.get("achievement_key") == achievement_key:
+                return True
+        return False
 
     def _insert_transaction(
         self,
@@ -1487,6 +2853,21 @@ class SQLiteEconomyRepository:
             ignore_bots=bool(row["ignore_bots"]),
             count_voice_when_alone=bool(row["count_voice_when_alone"]),
             max_admin_grant_per_use=int(row["max_admin_grant_per_use"]),
+            casino_max_bet=int(row["casino_max_bet"]),
+            casino_daily_profit_limit=int(row["casino_daily_profit_limit"]),
+            casino_min_bet_coin_flip=int(row["casino_min_bet_coin_flip"]),
+            casino_min_bet_dice=int(row["casino_min_bet_dice"]),
+            casino_min_bet_slot=int(row["casino_min_bet_slot"]),
+            casino_min_bet_roulette=int(row["casino_min_bet_roulette"]),
+            casino_min_bet_mascot_race=int(row["casino_min_bet_mascot_race"]),
+            casino_min_bet_duel=int(row["casino_min_bet_duel"]),
+            casino_min_bet_blackjack=int(row["casino_min_bet_blackjack"]),
+            casino_min_bet_scratch_card=int(row["casino_min_bet_scratch_card"]),
+            casino_min_bet_collective_race=int(
+                row["casino_min_bet_collective_race"]
+            ),
+            casino_min_bet_match_bet=int(row["casino_min_bet_match_bet"]),
+            casino_limiters_enabled=bool(row["casino_limiters_enabled"]),
             economy_manager_role_id=(
                 int(row["economy_manager_role_id"])
                 if row["economy_manager_role_id"] is not None
@@ -1624,4 +3005,30 @@ class SQLiteEconomyRepository:
                 if row["delivered_at"] is not None
                 else None
             ),
+        )
+
+    @staticmethod
+    def _row_to_level_config(row: sqlite3.Row) -> LevelConfig:
+        return LevelConfig(
+            guild_id=int(row["guild_id"]),
+            level=int(row["level"]),
+            role_id=int(row["role_id"]),
+            price=int(row["price"]),
+            is_active=bool(row["is_active"]),
+            created_by=int(row["created_by"]),
+            created_at=parse_datetime(str(row["created_at"])),
+            updated_at=parse_datetime(str(row["updated_at"])),
+        )
+
+    @staticmethod
+    def _row_to_level_purchase(row: sqlite3.Row) -> LevelUpgradePurchase:
+        return LevelUpgradePurchase(
+            id=int(row["id"]),
+            guild_id=int(row["guild_id"]),
+            user_id=int(row["user_id"]),
+            level=int(row["level"]),
+            role_id=int(row["role_id"]),
+            transaction_id=int(row["transaction_id"]),
+            price_paid=int(row["price_paid"]),
+            created_at=parse_datetime(str(row["created_at"])),
         )

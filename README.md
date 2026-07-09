@@ -1,215 +1,201 @@
-﻿# Discord Bot Copenhague
+# Discord Bot Copenhague
 
-Bot de Discord em Python usando `discord.py`, Slash Commands e alguns comandos prefixados com `cp!`.
+Bot de Discord em Python com `discord.py`, Slash Commands, SQLite e uma
+arquitetura organizada por cogs, services, repositories, models e UI.
 
-O projeto esta organizado por cogs e possui sistemas completos para giveaways de codigos, formularios dinamicos e bolao de placar, alem de comandos basicos de diversao, moderacao e eventos de ciclo de vida.
+O bot atende uma comunidade com economia de pontos, loja, cassino social,
+apostas de partidas, eventos, giveaways, formularios e utilidades de
+administracao.
 
 ## Funcionalidades
 
-### Inicializacao e estrutura
+### Base e operacao
 
 - Carregamento automatico de cogs em `app/cogs`.
-- Sincronizacao de Slash Commands no servidor definido por `GUILD_ID` ou globalmente quando `GUILD_ID` nao esta configurado.
-- Registro automatico de views persistentes de giveaways e formularios ativos apos reiniciar o bot.
-- Registro dinamico dos botoes persistentes do bolao.
-- Logs estruturados durante inicializacao, carregamento de cogs, sincronizacao de comandos e eventos importantes.
-- Prefixo para comandos tradicionais: `cp!`.
+- Sincronizacao de Slash Commands por `GUILD_ID` ou global.
+- Views persistentes para paineis, loja, giveaways, formularios, bets e eventos.
+- Logs estruturados de inicializacao, cogs e sincronizacao.
+- Prefixo legado `cp!` apenas para comandos operacionais antigos.
+- Persistencia SQLite local com schemas criados pelos repositories.
 
-### Diversao
+### Painel do bot
 
-- `/ping`: mostra a latencia atual do bot em milissegundos.
+- `/anuncio_bot`: publica uma embed de apresentacao do bot em um canal.
+- A embed aceita imagem anexada dentro da propria embed.
+- Botoes publicos:
+  - `Ajuda/comandos`: envia documentacao de comandos livres em privado.
+  - `Presente diario`: concede entre 50 e 200 pontos uma vez ao dia.
+  - `Pacote inicial`: concede 1500 pontos uma unica vez por usuario.
 
-Arquivos existentes como `games.py` e `profile.py` ainda estao como placeholders e nao possuem comandos ativos no momento.
+### Economia
 
-### Moderacao
+Comandos de usuario:
 
-- `/ban`: bane um membro do servidor.
+- `/saldo`: mostra o saldo do usuario.
+- `/perfil`: mostra resumo economico do usuario.
+- `/historico`: mostra transacoes recentes.
+- `/ranking`: mostra ranking de saldo.
+- `/converter_atividade`: converte mensagens e tempo em call em pontos.
 
-O comando de banimento valida:
+Comandos administrativos:
 
-- uso apenas dentro de servidores;
-- tentativa de autoban;
-- tentativa de banir o proprio bot;
-- hierarquia de cargos do usuario executor;
-- hierarquia de cargos do bot;
-- permissoes do Discord e falhas de API.
+- `/give_points`: concede pontos a um usuario.
+- `/give_points_role`: concede pontos a todos os usuarios de um cargo.
+- `/remove_points`: remove pontos de um usuario.
+- `/economy_status`: mostra configuracao atual.
+- `/economy_config`: ajusta moeda, taxas, minimos, canais, limite admin e cargo gerente.
+- `/economy_panel_setup`: publica painel publico de economia.
 
-Arquivos como `purge.py` e `warnings.py` ainda estao como placeholders e nao possuem comandos ativos no momento.
+Recursos:
 
-### Giveaway de codigos
+- Carteira por usuario e servidor.
+- Transacoes imutaveis.
+- Saldo nunca fica negativo.
+- Auditoria administrativa.
+- Conversao por delta para evitar duplicidade.
+- Pontuacao por mensagem e por call.
+- Controle de call sozinho e canal AFK.
 
-Sistema administrativo para criar, publicar, encerrar e gerenciar eventos de distribuicao de codigos.
+### Loja
 
-Comandos Slash:
+Comandos:
 
-- `/giveaway_create`: cria um evento de distribuicao de codigos.
-- `/giveaway_publish`: publica a mensagem do evento em um canal com botao de resgate.
-- `/giveaway_unpublish`: encerra/despublica o evento e pode apagar a mensagem original.
-- `/giveaway_codes`: consulta os codigos ainda disponiveis de um evento.
-- `/give_ticket`: adiciona tickets extras de resgate para um usuario.
-- `/user_ticket`: consulta os tickets extras restantes de um usuario.
-- `/remove_ticket`: remove tickets extras de um usuario.
+- `/loja`: abre a loja em privado.
+- `/embed_loja`: publica a loja fixa em um canal, com imagem opcional.
+- `/reward_create`: cria item na loja.
+- `/reward_update`: atualiza nome, descricao, preco, estoque, cargo, mensagem e status.
+- `/reward_remove`: remove item da loja com soft delete.
+- `/reward_list`: lista recompensas cadastradas.
 
-Comandos prefixados equivalentes:
+Recursos:
 
-- `cp!give_ticket <event_id> <usuario> [quantidade]`
-- `cp!user_ticket <event_id> <usuario>`
-- `cp!remove_ticket <event_id> <usuario> [quantidade]`
+- Embed com imagem dentro da propria embed.
+- Select menu para escolher item.
+- Botao `Consultar Pontos`.
+- Botao `Converter atividade` para executar o fluxo de `/converter_atividade`.
+- Confirmacao antes de comprar.
+- Estoque limitado ou ilimitado.
+- Estado `Esgotado` quando estoque chega a zero.
+- Limite por usuario.
+- Entrega de cargo ou recompensa manual.
+- Historico de compras preservado mesmo quando item e removido.
 
-Fluxo do giveaway:
+### Cassino social
 
-1. Um administrador cria o evento com `/giveaway_create`.
-2. O administrador publica o evento com `/giveaway_publish`.
-3. O bot envia uma mensagem publica com embed e botao **Resgatar codigo**.
-4. O usuario clica no botao para receber um codigo de forma privada.
-5. O bot registra o resgate para impedir duplicidade, salvo quando o usuario possui tickets extras.
-6. Se o codigo tiver premio, o bot anuncia publicamente o vencedor no canal.
-7. Opcionalmente, o bot envia DM para o usuario responsavel por notificacoes.
-8. O evento pode ser encerrado manualmente ou automaticamente ao expirar.
-9. Ao encerrar, o bot publica um resumo final com vencedores e codigos restantes.
+Comandos:
 
-Recursos do giveaway:
+- `/cara_coroa`
+- `/dado`
+- `/slot`
+- `/roleta`
+- `/duelo`
+- `/corrida`
+- `/blackjack`
+- `/jogos_perfil`
+- `/jogos_ranking`
+- `/jogos_historico`
 
-- geracao de codigos hexadecimais unicos;
-- plano de premios em formato compacto ou JSON;
-- codigos premiados e nao premiados;
-- limite de um resgate gratuito por usuario;
-- tickets extras por usuario e por evento;
-- consulta de codigos restantes;
-- finalizacao automatica por tempo;
-- views persistentes para manter botoes funcionando apos restart;
-- respostas privadas para operacoes administrativas e resgates.
+Recursos:
 
-Formato compacto aceito em `reward_plan`:
+- Controle de saldo e aposta minima/maxima.
+- Cooldown por jogo.
+- Historico por usuario.
+- Ranking por lucro.
+- Animacoes visuais em jogos instantaneos.
+- Duelo entre jogadores com botoes.
+- Blackjack com Pedir Carta, Parar e Dobrar.
+- Notificacao publica de vitorias nos jogos.
+- Notificacao publica de derrotas expressivas acima de 500 pontos.
+- Winstreak no BlackJack: vitorias seguidas aumentam o lucro pago, com teto de
+  bonus.
 
-```text
-Diamantes|100|2;Diamantes|300|1;500|1
-```
+### Eventos de jogos
 
-Formato JSON aceito em `reward_plan`:
+Comandos:
 
-```json
-[{"reward_name":"Diamantes","reward_amount":100,"reward_quantity":2}]
-```
+- `/raspadinha`
+- `/corrida_iniciar`
+- `/corrida_finalizar`
+- `/jackpot`
+- `/conquistas`
+- `/evento_sazonal`
+- `/evento_sazonal_definir`
 
-### Formularios dinamicos
+Recursos:
 
-Sistema administrativo para criar formularios interativos no Discord e encaminhar respostas para um canal especifico.
+- Raspadinha por tier.
+- Jackpot acumulado.
+- Corrida coletiva com botoes persistentes.
+- Conquistas por usuario.
+- Tema sazonal por servidor.
 
-Comandos Slash:
+### Apostas de partidas
 
-- `/form_create`: cria e publica um formulario no canal atual.
-- `/form_close`: encerra um formulario existente.
-- `/form_list`: lista os formularios ativos.
+Comandos:
 
-Fluxo dos formularios:
+- `/bet_criar`: cria sessao de apostas com dois times e odds iniciais.
+- `/bet_odds`: altera odds ao vivo.
+- `/bet_encerrar`: encerra partida, paga vencedores ou cancela.
+- `/bet_listar`: lista bets ativas.
 
-1. Um administrador cria o formulario com `/form_create`.
-2. O bot publica um embed com o botao **Responder**.
-3. O usuario clica no botao.
-4. Se houver perguntas de selecao, o bot mostra menus privados para escolha.
-5. Se houver perguntas curtas, o bot abre um modal.
-6. O bot valida e registra a resposta.
-7. O bot envia a resposta para o canal configurado.
-8. O usuario recebe confirmacao privada.
-9. O formulario pode ser encerrado com `/form_close`, desativando o botao publico.
+Recursos:
 
-Tipos de pergunta aceitos:
+- Odds travadas no momento da aposta do usuario.
+- Multiplas apostas por usuario.
+- Confirmacao privada antes de apostar.
+- Debito e pagamento atomicos via economia.
+- Notificacao publica quando odds mudam.
 
-- `curta`: resposta textual em modal.
-- `combo`: selecao unica em menu.
-- `multipla`: selecao de uma ou mais opcoes em menu.
+### Bolao, giveaways e formularios
 
-Formato aceito para `perguntas`:
+Bolao:
 
-```text
-curta|Qual seu nome?;combo|Cargo desejado|Moderador,Suporte,Eventos;multipla|Horarios disponiveis|Manha,Tarde,Noite
-```
+- `/bolao_create`
+- `/bolao_close`
+- `/bolao_list`
 
-Limites atuais:
+Giveaway:
 
-- ate 5 perguntas curtas;
-- ate 4 perguntas de selecao;
-- ate 25 opcoes por pergunta de selecao;
-- cada usuario pode responder apenas uma vez por formulario.
+- `/giveaway_create`
+- `/giveaway_publish`
+- `/giveaway_unpublish`
+- `/giveaway_codes`
+- `/give_ticket`
+- `/user_ticket`
+- `/remove_ticket`
 
-### Bolao de placar
+Formularios:
 
-Sistema de palpites para jogos, com publicacao em canal, coleta de placar por modal e calculo de vencedores por placar exato.
+- `/form_create`
+- `/form_close`
+- `/form_list`
 
-Comandos Slash:
+### Administracao e analytics
 
-- `/bolao_create`: cria e publica um bolao no canal atual.
-- `/bolao_close`: encerra um bolao, recebe o placar final e calcula os vencedores.
-- `/bolao_list`: lista os boloes ativos.
-
-Fluxo do bolao:
-
-1. Um administrador cria o bolao com `/bolao_create`.
-2. O bot publica um embed com o botao **Enviar Palpite**.
-3. O usuario clica no botao e recebe um modal para informar o placar.
-4. O bot valida e registra o palpite.
-5. O responsavel configurado recebe uma DM com o palpite enviado.
-6. Cada usuario pode enviar apenas um palpite por bolao.
-7. O administrador encerra o bolao com `/bolao_close`, informando o placar final.
-8. O bot desativa o botao publico e publica um resumo com o resultado e vencedores.
-
-Recursos do bolao:
-
-- identificacao por ID do bolao ou ID da mensagem publicada;
-- validacao de placares numericos;
-- armazenamento de palpites;
-- deteccao de palpite duplicado;
-- notificacao privada ao responsavel;
-- calculo de vencedores por placar exato;
-- botoes persistentes via `discord.ui.DynamicItem`.
-
-### Eventos
-
-- Listener `on_ready`: registra nos logs quando o bot conecta e fica operacional.
+- `/admin_panel`: painel central com status de economia, loja, bets e eventos.
+- `/admin_analytics`: indicadores acumulados de pontos, atividade, loja, cassino,
+  bets, eventos, ranking e auditoria.
+- `/ban`: moderacao basica de banimento.
+- `/purge`: remove mensagens recentes do canal atual.
+- `/lembrete`: agenda lembrete simples por DM.
+- `/ping`: latencia atual do bot.
 
 ## Persistencia
 
-O bot usa SQLite para persistir dados locais. Os caminhos sao configuraveis por variaveis de ambiente:
+O bot usa SQLite. Os caminhos sao configuraveis por variaveis de ambiente:
 
-- `GIVEAWAY_DB_PATH`: banco de giveaways, codigos, resgates e tickets extras.
-- `BOLAO_DB_PATH`: banco de boloes e palpites.
-- `FORM_DB_PATH`: banco de formularios e respostas.
+- `GIVEAWAY_DB_PATH`
+- `BOLAO_DB_PATH`
+- `MATCH_BET_DB_PATH`
+- `GAME_PROGRESS_DB_PATH`
+- `FORM_DB_PATH`
+- `ECONOMY_DB_PATH`
 
-Por padrao, os exemplos usam arquivos dentro de `data/`.
-
-## Estrutura
-
-```text
-.
-|-- app/
-|   |-- cogs/
-|   |   |-- betting/      # Bolao
-|   |   |-- events/       # Eventos do bot
-|   |   |-- forms/        # Formularios dinamicos
-|   |   |-- fun/          # Comandos simples de diversao
-|   |   |-- giveaway/     # Giveaway de codigos
-|   |   |-- moderation/   # Moderacao
-|   |   `-- utility/      # Reservado para utilidades
-|   |-- core/             # Bot, configuracao e logging
-|   |-- models/           # Dataclasses e tipos de dominio
-|   |-- repositories/     # Persistencia SQLite
-|   |-- services/         # Regras de negocio
-|   |-- types/            # Protocolos/tipos compartilhados
-|   |-- ui/               # Views, botoes, selects e modals
-|   `-- utils/            # Embeds, permissoes e helpers
-|-- tests/
-|-- bot.py
-|-- docker-compose.yml
-|-- Dockerfile
-|-- pyproject.toml
-|-- requirements-dev.txt
-`-- requirements.txt
-```
+Por padrao, os bancos ficam em `data/`.
 
 ## Configuracao local
 
-Crie um arquivo `.env` a partir de `.env.example`:
+Crie `.env` a partir de `.env.example`:
 
 ```env
 DISCORD_TOKEN=seu-token
@@ -218,18 +204,21 @@ ENVIRONMENT=development
 LOG_LEVEL=INFO
 GIVEAWAY_DB_PATH=data/giveaways.sqlite3
 BOLAO_DB_PATH=data/bot.db
+MATCH_BET_DB_PATH=data/bot.db
+GAME_PROGRESS_DB_PATH=data/bot.db
 FORM_DB_PATH=data/bot.db
+ECONOMY_DB_PATH=data/economy.sqlite3
 ENABLE_MEMBERS_INTENT=false
 ENABLE_MESSAGE_CONTENT_INTENT=false
 ```
 
-Se ativar `ENABLE_MEMBERS_INTENT=true`, habilite tambem o intent `Server Members Intent` no Discord Developer Portal.
+Ative `ENABLE_MEMBERS_INTENT=true` quando usar distribuicao por cargo ou precisar
+carregar membros do servidor. Ative o mesmo intent no Discord Developer Portal.
 
-Se ativar `ENABLE_MESSAGE_CONTENT_INTENT=true`, habilite tambem o intent `Message Content Intent` no Discord Developer Portal. Esse intent e necessario para comandos prefixados como `cp!give_ticket`, `cp!user_ticket` e `cp!remove_ticket`.
+Ative `ENABLE_MESSAGE_CONTENT_INTENT=true` somente se precisar dos comandos
+prefixados legados `cp!give_ticket`, `cp!user_ticket` e `cp!remove_ticket`.
 
-Para sincronizar comandos em um servidor de testes, confirme que `GUILD_ID` aponta para um servidor onde o bot esta presente e que o convite usou o escopo `applications.commands`.
-
-## Executando localmente
+## Executando
 
 ```bash
 python bot.py
@@ -238,8 +227,39 @@ python bot.py
 ## Docker
 
 ```bash
-docker compose up --build
+docker compose up -d --build
+docker compose logs -f --tail=100 discord-bot
 ```
+
+O `docker-compose.yml` monta `./data:/app/data`, preservando os bancos SQLite
+entre reinicios e rebuilds.
+
+Para atualizar a imagem localmente no Windows:
+
+```powershell
+.\scripts\update-container.ps1
+```
+
+Para criar backup dos bancos antes de atualizar:
+
+```powershell
+.\scripts\backup-data.ps1
+```
+
+Veja o guia completo em `docs/containerizacao.md`.
+
+## Checklist de deploy
+
+1. Criar `.env` com token real e caminhos de banco.
+2. Confirmar que `data/` esta persistido em volume.
+3. Convidar o bot com escopos `bot` e `applications.commands`.
+4. Habilitar intents necessarios no Developer Portal.
+5. Definir `GUILD_ID` em homologacao para sincronizacao rapida.
+6. Rodar o bot e confirmar todos os cogs nos logs.
+7. Testar `/admin_panel`, `/admin_analytics` e `/economy_status`.
+8. Publicar `/anuncio_bot`, `/economy_panel_setup` e `/embed_loja`.
+9. Reiniciar o bot e testar botoes persistentes.
+10. Fazer backup periodico de `data/*.sqlite3` e `data/*.db`.
 
 ## Qualidade
 
@@ -247,4 +267,24 @@ docker compose up --build
 python -m pytest
 python -m ruff check .
 python -m black --check .
+```
+
+## Estrutura
+
+```text
+app/
+  cogs/          # Slash commands e eventos Discord
+  core/          # bot, config e logging
+  models/        # dataclasses e enums de dominio
+  providers/     # providers de atividade
+  repositories/  # SQLite e transacoes
+  services/      # regras de negocio
+  ui/            # views, botoes, selects e modals
+  utils/         # embeds, permissoes e helpers
+tests/
+data/
+bot.py
+Dockerfile
+docker-compose.yml
+pyproject.toml
 ```

@@ -17,6 +17,12 @@ class Settings:
     GUILD_ID: int | None
     ENVIRONMENT: str
     LOG_LEVEL: str
+    DATABASE_BACKEND: str
+    POSTGRES_DSN: str
+    POSTGRES_SCHEMA: str
+    POSTGRES_POOL_MIN_SIZE: int
+    POSTGRES_POOL_MAX_SIZE: int
+    GAME_PROGRESS_DB_BACKEND: str
     ENABLE_MEMBERS_INTENT: bool
     ENABLE_MESSAGE_CONTENT_INTENT: bool
     GIVEAWAY_DB_PATH: str
@@ -42,6 +48,26 @@ class Settings:
             GUILD_ID=guild_id,
             ENVIRONMENT=env.get("ENVIRONMENT", "development"),
             LOG_LEVEL=env.get("LOG_LEVEL", "INFO").upper(),
+            DATABASE_BACKEND=env.get("DATABASE_BACKEND", "sqlite").strip().lower(),
+            POSTGRES_DSN=env.get(
+                "POSTGRES_DSN",
+                "postgresql://copenhague:copenhague@postgres:5432/copenhague",
+            ),
+            POSTGRES_SCHEMA=env.get("POSTGRES_SCHEMA", "copenhague"),
+            POSTGRES_POOL_MIN_SIZE=max(
+                1,
+                int(env.get("POSTGRES_POOL_MIN_SIZE", "2")),
+            ),
+            POSTGRES_POOL_MAX_SIZE=max(
+                1,
+                int(env.get("POSTGRES_POOL_MAX_SIZE", "10")),
+            ),
+            GAME_PROGRESS_DB_BACKEND=env.get(
+                "GAME_PROGRESS_DB_BACKEND",
+                env.get("DATABASE_BACKEND", "sqlite"),
+            )
+            .strip()
+            .lower(),
             ENABLE_MEMBERS_INTENT=_get_bool(env, "ENABLE_MEMBERS_INTENT", False),
             ENABLE_MESSAGE_CONTENT_INTENT=_get_bool(
                 env,

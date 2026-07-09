@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import discord
 
-from app.models.casino import CasinoGameType, DuelMode
+from app.models.casino import CasinoGameType, CoinSide, DuelMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +17,7 @@ class CasinoAnimation:
     footer: str = "Aguarde o resultado..."
     color_value: int = 0xF1C40F
     delay_seconds: float = 0.45
+    settle_seconds: float = 0.0
 
 
 def casino_animation_for_game(game_type: CasinoGameType) -> CasinoAnimation:
@@ -73,6 +74,25 @@ def casino_animation_for_game(game_type: CasinoGameType) -> CasinoAnimation:
             title="Cassino em movimento",
             frames=("✨", "✨ ✨", "✨ ✨ ✨"),
         ),
+    )
+
+
+def coin_flip_animation(result_label: str) -> CasinoAnimation:
+    result = _coin_side_from_label(result_label)
+    final_label = result.value.title()
+    final_frame = f"🪙  **Caiu em {final_label}**"
+    return CasinoAnimation(
+        title="Moeda no ar",
+        frames=(
+            "🪙   `cara`",
+            "  🪙 `girando`",
+            "`coroa`   🪙",
+            "  🪙 `girando`",
+            final_frame,
+        ),
+        footer="A moeda está caindo...",
+        delay_seconds=0.5,
+        settle_seconds=1.0,
     )
 
 
@@ -145,3 +165,13 @@ async def play_casino_animation(
             )
         except discord.HTTPException:
             return
+    if animation.settle_seconds > 0:
+        await asyncio.sleep(animation.settle_seconds)
+
+
+def _coin_side_from_label(result_label: str) -> CoinSide:
+    normalized = result_label.strip().casefold()
+    try:
+        return CoinSide(normalized)
+    except ValueError:
+        return CoinSide.CARA

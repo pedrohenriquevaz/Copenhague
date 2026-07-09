@@ -14,12 +14,17 @@ from app.services.collective_race_service import (
     CollectiveRaceValidationError,
 )
 from app.services.game_progress_service import (
+    DEFAULT_ACHIEVEMENTS,
     GameProgressService,
     GameProgressValidationError,
 )
 from app.services.scratch_card_service import (
     ScratchCardService,
     ScratchCardValidationError,
+)
+from app.ui.game_notifications import (
+    GameOutcomeNotice,
+    announce_grouped_game_results,
 )
 from app.ui.phase04_views import (
     CollectiveRaceButton,
@@ -34,6 +39,30 @@ from app.ui.phase04_views import (
 from app.utils.embeds import format_points
 
 logger = logging.getLogger(__name__)
+
+
+async def _achievement_key_autocomplete(
+    _interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    needle = current.strip().casefold()
+    choices: list[app_commands.Choice[str]] = []
+    for achievement in DEFAULT_ACHIEVEMENTS:
+        haystack = (
+            f"{achievement.achievement_key} {achievement.name} "
+            f"{achievement.description}"
+        ).casefold()
+        if needle and needle not in haystack:
+            continue
+        choices.append(
+            app_commands.Choice(
+                name=f"{achievement.name} ({achievement.achievement_key})",
+                value=achievement.achievement_key,
+            )
+        )
+        if len(choices) == 25:
+            break
+    return choices
 
 
 class CasinoPhase04Cog(commands.Cog):
@@ -225,7 +254,7 @@ class CasinoPhase04Cog(commands.Cog):
             embed=build_collective_race_result_embed(result, settings),
             ephemeral=True,
         )
-        await self._send_public_race_result(interaction, result.race.id)
+        await self._send_public_race_result(interaction, result)
 
     @app_commands.command(
         name="jackpot",
@@ -267,13 +296,63 @@ class CasinoPhase04Cog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
         target = usuario or interaction.user
         achievements = await self.progress_service.list_user_achievements(
             interaction.guild.id,
             target.id,
         )
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=build_achievements_embed(target.id, achievements),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="achievement_reward",
+        description="Altera a recompensa de pontos de uma conquista.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        conquista="Chave da conquista.",
+        pontos="Nova recompensa em pontos.",
+    )
+    @app_commands.autocomplete(conquista=_achievement_key_autocomplete)
+    async def achievement_reward(
+        self,
+        interaction: discord.Interaction,
+        conquista: str,
+        pontos: int,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando só pode ser usado em servidores.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        settings = await self.bot.economy_repository.get_guild_settings(  # type: ignore[attr-defined]
+            interaction.guild.id
+        )
+        try:
+            achievement = await self.progress_service.configure_achievement_reward(
+                interaction.guild.id,
+                conquista,
+                pontos,
+            )
+        except GameProgressValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        reward = format_points(achievement.reward_points, settings.currency_name)
+        await interaction.followup.send(
+            (
+                "Recompensa da conquista atualizada.\n"
+                f"Conquista: **{achievement.name}** "
+                f"(`{achievement.achievement_key}`)\n"
+                f"Recompensa: **{reward}**"
+            ),
             ephemeral=True,
         )
 
@@ -354,7 +433,7 @@ class CasinoPhase04Cog(commands.Cog):
             except CollectiveRaceValidationError:
                 return
             await self._edit_race_message(result.race, closed=True)
-            await self._send_race_result_to_channel(result.race.id)
+            await self._send_race_result_to_channel(result)
 
         asyncio.create_task(runner())
 
@@ -395,22 +474,20 @@ class CasinoPhase04Cog(commands.Cog):
     async def _send_public_race_result(
         self,
         interaction: discord.Interaction,
-        race_id: int,
+        result,
     ) -> None:
         channel = interaction.channel
         if channel is None or not hasattr(channel, "send"):
             return
-        race = await self.race_service.get_race(race_id)
-        if race is None:
-            return
         try:
-            await channel.send(_format_race_public_result(race))
+            await channel.send(_format_race_public_result(result.race))
         except discord.HTTPException:
-            logger.exception("Erro ao anunciar corrida coletiva %s.", race.id)
+            logger.exception("Erro ao anunciar corrida coletiva %s.", result.race.id)
+        await self._announce_collective_race_outcomes(channel, result)
 
-    async def _send_race_result_to_channel(self, race_id: int) -> None:
-        race = await self.race_service.get_race(race_id)
-        if race is None or race.channel_id is None:
+    async def _send_race_result_to_channel(self, result) -> None:
+        race = result.race
+        if race.channel_id is None:
             return
         channel = self.bot.get_channel(race.channel_id)
         if channel is None:
@@ -424,6 +501,31 @@ class CasinoPhase04Cog(commands.Cog):
             await channel.send(_format_race_public_result(race))
         except discord.HTTPException:
             logger.exception("Erro ao anunciar corrida coletiva %s.", race.id)
+        await self._announce_collective_race_outcomes(channel, result)
+
+    async def _announce_collective_race_outcomes(
+        self,
+        channel,
+        result,
+    ) -> None:
+        settings = await self.bot.economy_repository.get_guild_settings(  # type: ignore[attr-defined]
+            result.race.guild_id
+        )
+        notices = [
+            GameOutcomeNotice(
+                user_id=bet.user_id,
+                stake=bet.stake,
+                payout=bet.potential_payout if bet.status.value == "won" else 0,
+            )
+            for bet in result.bets
+            if bet.status.value in {"won", "lost"}
+        ]
+        await announce_grouped_game_results(
+            channel,
+            game_name="Corrida Coletiva",
+            settings=settings,
+            notices=notices,
+        )
 
 
 def _format_race_public_result(race: CollectiveRaceSession) -> str:

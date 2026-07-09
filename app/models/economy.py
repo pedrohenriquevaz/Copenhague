@@ -20,6 +20,8 @@ class EconomyTransactionType(StrEnum):
     BOT_REWARD = "BOT_REWARD"
     REFUND = "REFUND"
     SYSTEM_ADJUSTMENT = "SYSTEM_ADJUSTMENT"
+    USER_TRANSFER = "USER_TRANSFER"
+    LEVEL_UPGRADE = "LEVEL_UPGRADE"
 
 
 @dataclass(slots=True)
@@ -73,6 +75,17 @@ class BalanceMutationResult:
 
 
 @dataclass(slots=True)
+class UserTransferResult:
+    """Resultado de uma transferencia de pontos entre usuarios."""
+
+    sender_wallet: UserWallet
+    receiver_wallet: UserWallet
+    sender_transaction: EconomyTransaction
+    receiver_transaction: EconomyTransaction
+    amount: int
+
+
+@dataclass(slots=True)
 class BotRewardClaimResult:
     """Resultado de um resgate de recompensa do painel do bot."""
 
@@ -94,3 +107,37 @@ class ActivityConversionResult:
     message_points: int
     total_points: int
     source: str
+
+
+@dataclass(slots=True)
+class UserGameProgressSummary:
+    """Resumo acumulado usado para liberar conquistas de jogos."""
+
+    wallet: UserWallet
+    total_games_played: int
+    total_wins: int
+    total_wagered: int
+    total_payout: int
+    net_profit: int
+    biggest_win: int
+    duel_games: int
+    duel_wins: int
+    collective_race_wins: int
+    scratch_plays: int
+    scratch_wins: int
+    blackjack_best_streak: int
+
+
+@dataclass(slots=True)
+class UserProfileResetResult:
+    """Resumo dos dados economicos removidos ao resetar um perfil."""
+
+    wallet_before: UserWallet | None
+    deleted_transactions: int
+    deleted_reward_claims: int
+    deleted_activity_cursors: int
+    deleted_message_stats: int
+    deleted_voice_sessions: int
+    deleted_purchases: int
+    deleted_wallets: int
+    deleted_level_upgrades: int = 0

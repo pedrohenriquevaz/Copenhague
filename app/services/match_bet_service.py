@@ -17,6 +17,7 @@ from app.models.match_bet import (
 )
 from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.repositories.match_bet_repository import MatchBetRepositoryProtocol
+from app.services.economy_limits import apply_daily_casino_profit_cap
 
 
 class MatchBetServiceError(Exception):
@@ -31,7 +32,6 @@ class MatchBetService:
     """Regras de negocio para apostas saudaveis em campeonatos."""
 
     MIN_STAKE = 1
-    MAX_STAKE = 100_000
     MIN_ODD_BPS = 101
     MAX_ODD_BPS = 10_000
 
@@ -109,7 +109,12 @@ class MatchBetService:
         stake: int,
     ) -> MatchBetPlacementResult:
         selected_team = self.parse_team(team)
-        self._validate_stake(stake)
+        settings = await self._economy_repository.get_guild_settings(guild_id)
+        self._validate_stake(
+            stake,
+            settings.casino_min_bet_match_bet,
+            settings.casino_max_bet,
+        )
 
         async with self._lock:
             match = await self._require_open_match(guild_id, match_id)
@@ -225,13 +230,18 @@ class MatchBetService:
             total_refunded = 0
             for ticket in tickets:
                 if ticket.status is MatchBetTicketStatus.WON:
-                    transaction_id = await self._pay_ticket(ticket)
-                    await self._repository.mark_ticket_paid(
-                        ticket.id,
-                        transaction_id=transaction_id,
-                    )
-                    total_paid += ticket.potential_payout
+                    if ticket.payout_transaction_id is not None:
+                        continue
+                    transaction_id, paid_amount = await self._pay_ticket(ticket)
+                    if transaction_id is not None:
+                        await self._repository.mark_ticket_paid(
+                            ticket.id,
+                            transaction_id=transaction_id,
+                        )
+                    total_paid += paid_amount
                 elif ticket.status is MatchBetTicketStatus.REFUNDED:
+                    if ticket.payout_transaction_id is not None:
+                        continue
                     transaction_id = await self._refund_stake(
                         guild_id=ticket.guild_id,
                         user_id=ticket.user_id,
@@ -264,11 +274,22 @@ class MatchBetService:
             total_refunded=total_refunded,
         )
 
-    async def _pay_ticket(self, ticket: MatchBetTicket) -> int:
+    async def _pay_ticket(self, ticket: MatchBetTicket) -> tuple[int | None, int]:
+        settings = await self._economy_repository.get_guild_settings(ticket.guild_id)
+        payout = await apply_daily_casino_profit_cap(
+            self._economy_repository,
+            settings,
+            guild_id=ticket.guild_id,
+            user_id=ticket.user_id,
+            stake=ticket.stake,
+            payout=ticket.potential_payout,
+        )
+        if payout <= 0:
+            return None, 0
         result = await self._economy_repository.mutate_balance(
             guild_id=ticket.guild_id,
             user_id=ticket.user_id,
-            amount=ticket.potential_payout,
+            amount=payout,
             transaction_type=EconomyTransactionType.MATCH_BET_PAYOUT,
             actor_id=None,
             reason="match_bet_payout",
@@ -278,9 +299,11 @@ class MatchBetService:
                 "team": ticket.team.value,
                 "odd": self.format_odd_bps(ticket.odd_bps),
                 "stake": ticket.stake,
+                "payout": payout,
+                "uncapped_payout": ticket.potential_payout,
             },
         )
-        return result.transaction.id
+        return result.transaction.id, payout
 
     async def _refund_stake(
         self,
@@ -369,11 +392,11 @@ class MatchBetService:
         return match.odd_team_2_bps
 
     @classmethod
-    def _validate_stake(cls, stake: int) -> None:
-        if stake < cls.MIN_STAKE:
-            raise MatchBetValidationError(f"A aposta minima e {cls.MIN_STAKE}.")
-        if stake > cls.MAX_STAKE:
-            raise MatchBetValidationError(f"A aposta maxima e {cls.MAX_STAKE}.")
+    def _validate_stake(cls, stake: int, min_stake: int, max_stake: int) -> None:
+        if stake < min_stake:
+            raise MatchBetValidationError(f"A aposta minima e {min_stake}.")
+        if stake > max_stake:
+            raise MatchBetValidationError(f"A aposta maxima e {max_stake}.")
 
     @staticmethod
     def _require_text(value: str, message: str) -> str:

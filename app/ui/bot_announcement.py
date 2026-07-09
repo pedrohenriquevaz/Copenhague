@@ -10,15 +10,15 @@ from app.utils.embeds import format_points
 
 
 def build_bot_announcement_embed(*, image_url: str | None = None) -> discord.Embed:
-    """Cria a embed publica de apresentacao do bot."""
+    """Cria a embed pública de apresentação do bot."""
 
     embed = discord.Embed(
-        title="Central do Bot",
+        title="Central do bot",
         description=(
             "Participe do servidor, acumule pontos e use-os na loja, em jogos, "
-            "apostas saudaveis de campeonatos e eventos da comunidade.\n\n"
-            "Use os botoes abaixo para ver os comandos, resgatar seu presente "
-            "diario ou pegar seu pacote inicial."
+            "apostas saudáveis de campeonatos e eventos da comunidade.\n\n"
+            "Use os botões abaixo para ver os comandos, resgatar seu presente "
+            "diário ou pegar seu pacote inicial."
         ),
         color=discord.Color.gold(),
     )
@@ -44,67 +44,74 @@ def build_bot_announcement_embed(*, image_url: str | None = None) -> discord.Emb
 
 
 def build_user_commands_embed() -> discord.Embed:
-    """Documentacao resumida dos comandos livres para usuarios."""
+    """Documentação resumida dos comandos livres para usuários."""
 
     embed = discord.Embed(
-        title="Ajuda e Comandos",
+        title="Ajuda e comandos",
         description=(
-            "Estes sao os principais comandos livres para usuarios. "
+            "Estes são os comandos disponíveis para membros comuns. "
             "Comandos administrativos ficam fora desta lista."
         ),
         color=discord.Color.blurple(),
     )
     embed.add_field(
-        name="Economia",
+        name="Economia e atividade",
         value=(
-            "`/saldo` consulta seus pontos.\n"
-            "`/perfil` mostra seu perfil economico.\n"
-            "`/historico` lista transacoes recentes.\n"
-            "`/ranking` mostra o ranking de pontos.\n"
-            "`/converter_atividade` transforma atividade em pontos."
+            "`/saldo` consulta seus pontos ou os pontos de outro usuário.\n"
+            "`/perfil` mostra o perfil econômico.\n"
+            "`/transferir` envia pontos para outro usuário.\n"
+            "`/historico` lista suas transações recentes.\n"
+            "`/ranking` mostra o ranking de pontos do servidor.\n"
+            "`/converter_atividade` transforma mensagens e tempo em call em pontos."
         ),
         inline=False,
     )
     embed.add_field(
-        name="Loja",
-        value="`/loja` abre a loja para trocar pontos por recompensas.",
+        name="Loja e recompensas",
+        value=(
+            "`/loja` abre a loja para trocar pontos por recompensas.\n"
+            "`Presente diário` resgata pontos uma vez por dia.\n"
+            "`Pacote inicial` resgata pontos uma única vez por usuário."
+        ),
         inline=False,
     )
     embed.add_field(
         name="Jogos",
         value=(
-            "`/blackjack`, `/cara_coroa`, `/dado`, `/slot`, `/roleta`, "
-            "`/duelo`, `/corrida` e `/raspadinha`."
+            "`/blackjack` joga BlackJack apostando pontos.\n"
+            "`/cara_coroa`, `/dado`, `/slot` e `/roleta` são jogos rápidos.\n"
+            "`/duelo` desafia outro membro em uma aposta.\n"
+            "`/corrida` aposta em uma corrida individual de mascotes.\n"
+            "`/raspadinha` compra uma raspadinha virtual."
         ),
         inline=False,
     )
     embed.add_field(
         name="Progresso",
         value=(
-            "`/jogos_perfil`, `/jogos_ranking`, `/jogos_historico`, "
-            "`/conquistas`, `/jackpot` e `/evento_sazonal`."
+            "`/jogos_perfil` mostra estatísticas de jogos.\n"
+            "`/jogos_ranking` mostra o ranking de lucro em jogos.\n"
+            "`/jogos_historico` mostra seu histórico recente de apostas.\n"
+            "`/conquistas` mostra conquistas de jogos.\n"
+            "`/jackpot` mostra o jackpot atual da raspadinha.\n"
+            "`/evento_sazonal` mostra o tema sazonal dos jogos."
         ),
         inline=False,
     )
     embed.add_field(
-        name="Eventos e apostas",
+        name="Eventos por botão",
         value=(
-            "Quando houver bolao, bet ou corrida coletiva publicados no chat, "
-            "use os botoes da propria embed para participar."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Painel",
-        value=(
-            "`Presente diario` pode ser resgatado uma vez por dia.\n"
-            "`Pacote inicial` pode ser resgatado uma unica vez por usuario."
+            "Bets, bolões, giveaways, formulários e corridas coletivas publicados "
+            "no chat usam os botões da própria embed para participação."
         ),
         inline=False,
     )
     embed.add_field(
         name="Utilidade",
-        value="`/ping` mostra a latencia atual do bot.",
+        value=(
+            "`/lembrete` agenda um lembrete simples por DM.\n"
+            "`/ping` mostra a latência atual do bot."
+        ),
         inline=False,
     )
     return embed
@@ -119,7 +126,7 @@ def build_reward_claim_embed(
 ) -> discord.Embed:
     embed = discord.Embed(title=title, color=discord.Color.green())
     embed.add_field(
-        name="Voce recebeu",
+        name="Você recebeu",
         value=format_points(amount, currency_name),
         inline=True,
     )
@@ -132,7 +139,7 @@ def build_reward_claim_embed(
 
 
 class BotAnnouncementView(discord.ui.View):
-    """Botoes persistentes do anuncio do bot."""
+    """Botões persistentes do anúncio do bot."""
 
     def __init__(self, bot: commands.Bot) -> None:
         super().__init__(timeout=None)
@@ -154,7 +161,7 @@ class BotAnnouncementView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="Presente diario",
+        label="Presente diário",
         style=discord.ButtonStyle.success,
         custom_id="bot_announcement:daily_gift",
     )
@@ -166,7 +173,7 @@ class BotAnnouncementView(discord.ui.View):
         await self._claim_reward(
             interaction,
             claim="daily",
-            title="Presente diario resgatado",
+            title="Presente diário resgatado",
         )
 
     @discord.ui.button(
@@ -194,13 +201,13 @@ class BotAnnouncementView(discord.ui.View):
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
-                "Este painel so pode ser usado em servidores.",
+                "Este painel só pode ser usado em servidores.",
                 ephemeral=True,
             )
             return
         if interaction.user.bot:
             await interaction.response.send_message(
-                "Bots nao podem resgatar recompensas.",
+                "Bots não podem resgatar recompensas.",
                 ephemeral=True,
             )
             return

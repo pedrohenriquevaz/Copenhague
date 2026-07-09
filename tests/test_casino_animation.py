@@ -5,6 +5,7 @@ from app.ui.casino_animation import (
     blackjack_animation,
     build_casino_animation_embed,
     casino_animation_for_game,
+    coin_flip_animation,
     duel_animation,
 )
 
@@ -17,6 +18,20 @@ def test_roulette_animation_has_multiple_frames() -> None:
     assert len(animation.frames) >= 3
     assert embed.title == "Roleta girando"
     assert animation.frames[0] in (embed.description or "")
+
+
+def test_coin_flip_animation_lands_on_result() -> None:
+    animation = coin_flip_animation("Coroa")
+    embed = build_casino_animation_embed(
+        animation,
+        frame_index=len(animation.frames) - 1,
+    )
+
+    assert animation.title == "Moeda no ar"
+    assert "Coroa" in animation.frames[-1]
+    assert "Cara" not in animation.frames[-1]
+    assert animation.settle_seconds >= 1.0
+    assert "Coroa" in (embed.description or "")
 
 
 def test_duel_dice_animation_uses_dice_frames() -> None:

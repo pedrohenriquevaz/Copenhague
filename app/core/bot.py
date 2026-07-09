@@ -14,6 +14,15 @@ from app.repositories.form_repository import SQLiteFormRepository
 from app.repositories.game_progress_repository import SQLiteGameProgressRepository
 from app.repositories.giveaway_repository import SQLiteGiveawayRepository
 from app.repositories.match_bet_repository import SQLiteMatchBetRepository
+from app.repositories.postgres_database import PostgresDatabase
+from app.repositories.postgres_repositories import (
+    PostgresBolaoRepository,
+    PostgresEconomyRepository,
+    PostgresFormRepository,
+    PostgresGameProgressRepository,
+    PostgresGiveawayRepository,
+    PostgresMatchBetRepository,
+)
 from app.services.activity_service import ActivityService
 from app.services.blackjack_service import BlackjackService
 from app.services.bolao_service import BolaoService
@@ -36,17 +45,11 @@ class DiscordBot(commands.Bot):
     def __init__(self) -> None:
         settings = get_settings()
         self.settings = settings
-        self.giveaway_repository = SQLiteGiveawayRepository(settings.GIVEAWAY_DB_PATH)
+        self.postgres_database: PostgresDatabase | None = None
+        self._build_repositories(settings)
         self.giveaway_service = GiveawayService(self.giveaway_repository)
-        self.bolao_repository = SQLiteBolaoRepository(settings.BOLAO_DB_PATH)
         self.bolao_service = BolaoService(self.bolao_repository)
-        self.match_bet_repository = SQLiteMatchBetRepository(settings.MATCH_BET_DB_PATH)
-        self.game_progress_repository = SQLiteGameProgressRepository(
-            settings.GAME_PROGRESS_DB_PATH
-        )
-        self.form_repository = SQLiteFormRepository(settings.FORM_DB_PATH)
         self.form_service = FormService(self.form_repository)
-        self.economy_repository = SQLiteEconomyRepository(settings.ECONOMY_DB_PATH)
         self.economy_service = EconomyService(self.economy_repository)
         self.game_progress_service = GameProgressService(
             self.game_progress_repository,
@@ -58,8 +61,14 @@ class DiscordBot(commands.Bot):
         )
         self.activity_service = ActivityService(self.economy_repository)
         self.shop_service = ShopService(self.economy_repository)
-        self.casino_service = CasinoService(self.economy_repository)
-        self.blackjack_service = BlackjackService(self.economy_repository)
+        self.casino_service = CasinoService(
+            self.economy_repository,
+            progress_service=self.game_progress_service,
+        )
+        self.blackjack_service = BlackjackService(
+            self.economy_repository,
+            progress_service=self.game_progress_service,
+        )
         self.scratch_card_service = ScratchCardService(
             self.economy_repository,
             self.game_progress_service,
@@ -82,6 +91,54 @@ class DiscordBot(commands.Bot):
             command_prefix="cp!",
             intents=intents,
             help_command=None,
+        )
+
+    def _build_repositories(self, settings) -> None:
+        if settings.DATABASE_BACKEND == "postgres":
+            self.postgres_database = self._create_postgres_database(settings)
+            self.giveaway_repository = PostgresGiveawayRepository(
+                self.postgres_database
+            )
+            self.bolao_repository = PostgresBolaoRepository(self.postgres_database)
+            self.match_bet_repository = PostgresMatchBetRepository(
+                self.postgres_database
+            )
+            self.game_progress_repository = PostgresGameProgressRepository(
+                self.postgres_database
+            )
+            self.form_repository = PostgresFormRepository(self.postgres_database)
+            self.economy_repository = PostgresEconomyRepository(
+                self.postgres_database
+            )
+            logger.info(
+                "Runtime de persistencia: PostgreSQL "
+                "(economia, progressao, bets, bolao, formularios e sorteios)."
+            )
+            return
+
+        if settings.DATABASE_BACKEND != "sqlite":
+            raise ValueError("DATABASE_BACKEND precisa ser 'sqlite' ou 'postgres'.")
+
+        self.giveaway_repository = SQLiteGiveawayRepository(settings.GIVEAWAY_DB_PATH)
+        self.bolao_repository = SQLiteBolaoRepository(settings.BOLAO_DB_PATH)
+        self.match_bet_repository = SQLiteMatchBetRepository(settings.MATCH_BET_DB_PATH)
+        self.game_progress_repository = self._build_game_progress_repository(settings)
+        self.form_repository = SQLiteFormRepository(settings.FORM_DB_PATH)
+        self.economy_repository = SQLiteEconomyRepository(settings.ECONOMY_DB_PATH)
+        logger.info("Runtime de persistencia: SQLite.")
+
+    def _get_postgres_database(self, settings) -> PostgresDatabase:
+        if self.postgres_database is None:
+            self.postgres_database = self._create_postgres_database(settings)
+        return self.postgres_database
+
+    @staticmethod
+    def _create_postgres_database(settings) -> PostgresDatabase:
+        return PostgresDatabase(
+            settings.POSTGRES_DSN,
+            schema=settings.POSTGRES_SCHEMA,
+            min_size=settings.POSTGRES_POOL_MIN_SIZE,
+            max_size=settings.POSTGRES_POOL_MAX_SIZE,
         )
 
     async def setup_hook(self) -> None:
@@ -118,6 +175,23 @@ class DiscordBot(commands.Bot):
     def _has_setup_function(file: Path) -> bool:
         source = file.read_text(encoding="utf-8")
         return "def setup(" in source or "async def setup(" in source
+
+    def _build_game_progress_repository(self, settings):
+        if settings.GAME_PROGRESS_DB_BACKEND == "postgres":
+            logger.info("Usando PostgreSQL para progresso dos jogos.")
+            return PostgresGameProgressRepository(
+                self._get_postgres_database(settings),
+            )
+        if settings.GAME_PROGRESS_DB_BACKEND == "sqlite":
+            return SQLiteGameProgressRepository(settings.GAME_PROGRESS_DB_PATH)
+        raise ValueError(
+            "GAME_PROGRESS_DB_BACKEND precisa ser 'sqlite' ou 'postgres'."
+        )
+
+    async def close(self) -> None:
+        await super().close()
+        if self.postgres_database is not None:
+            await self.postgres_database.close()
 
     async def sync_commands(self) -> None:
         """

@@ -7,11 +7,8 @@ from discord.ext import commands
 
 from app.services.activity_service import ActivityService
 from app.services.economy_service import EconomyService
-from app.services.shop_service import ShopService
-from app.ui.shop_panel import ShopView
 from app.utils.embeds import (
     build_activity_conversion_embed,
-    build_shop_embed,
     build_transaction_history_embed,
     build_wallet_embed,
 )
@@ -81,11 +78,11 @@ class EconomyPanelView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="Abrir loja",
-        style=discord.ButtonStyle.success,
-        custom_id="economy_panel:shop",
+        label="Transferir pontos",
+        style=discord.ButtonStyle.secondary,
+        custom_id="economy_panel:transfer",
     )
-    async def open_shop(
+    async def transfer_points(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button,
@@ -97,13 +94,11 @@ class EconomyPanelView(discord.ui.View):
             )
             return
 
-        shop = cast(ShopService, self.bot.shop_service)  # type: ignore[attr-defined]
-        repository = self.bot.economy_repository  # type: ignore[attr-defined]
-        settings = await repository.get_guild_settings(interaction.guild.id)
-        rewards = await shop.list_rewards(interaction.guild.id)
         await interaction.response.send_message(
-            embed=build_shop_embed(rewards, settings),
-            view=ShopView(self.bot, rewards, settings) if rewards else None,
+            (
+                "Use `/transferir usuario: valor:` para transferir pontos.\n"
+                "No campo `usuario`, selecione ou mencione a pessoa pelo Discord."
+            ),
             ephemeral=True,
         )
 

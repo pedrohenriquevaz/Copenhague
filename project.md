@@ -714,3 +714,61 @@ Nao implementar agora:
 
 Esses pontos podem virar milestones futuras depois da economia e loja basicas
 estarem estaveis.
+
+### Finalizacao
+
+Status desta etapa: concluida em codigo. A unica parte que nao pode ser
+garantida localmente e a validacao real no Discord, pois depende do token,
+permissoes do servidor, canais e sincronizacao de Slash Commands.
+
+#### Entregue em codigo
+
+- README atualizado com funcionalidades, comandos, deploy e checklist.
+- `bet.md` atualizado marcando o roadmap 0.1 ate 0.5 como concluido em codigo.
+- `.env.example` completado com bancos de match bets e game progress.
+- `docker-compose.yml` com volume persistente `./data:/app/data`.
+- `/admin_panel` criado para status central de economia, loja, bets e eventos.
+- `/admin_analytics` criado para indicadores de pontos, atividade, loja, cassino,
+  bets, eventos, ranking e auditoria.
+- `/economy_config` criado para configurar moeda, taxas, minimos, canais, cargo
+  gerente e limite administrativo.
+- `/reward_update` e `/reward_remove` criados para manutencao da loja.
+- `/purge` e `/lembrete` adicionados para fechar placeholders operacionais.
+- Analytics internos adicionados aos repositories de economia, bets e progresso.
+- Testes adicionados para configuracao, analytics e CRUD de loja.
+
+#### Checklist manual no Discord real
+
+1. Subir o bot limpo com `.env` real.
+2. Confirmar nos logs que todos os cogs carregaram.
+3. Confirmar sincronizacao dos Slash Commands.
+4. Conferir que `/bot_anuncio` sumiu e `/anuncio_bot` aparece.
+5. Rodar `/admin_panel`, `/admin_analytics` e `/economy_status`.
+6. Publicar `/anuncio_bot` com imagem.
+7. Testar botoes `Ajuda/comandos`, `Presente diario` e `Pacote inicial`.
+8. Publicar `/economy_panel_setup` e testar conversao, saldo e historico.
+9. Publicar `/embed_loja` e testar select, compra e consultar pontos.
+10. Criar, atualizar e remover item com `/reward_create`, `/reward_update` e
+    `/reward_remove`.
+11. Distribuir pontos por cargo com `/give_points_role`.
+12. Jogar blackjack e jogos instantaneos.
+13. Criar bet, apostar, alterar odds e encerrar.
+14. Testar raspadinha, jackpot, conquistas e corrida coletiva.
+15. Reiniciar o bot e testar botoes persistentes novamente.
+
+#### Balanceamento recomendado antes de abrir para todos
+
+- Definir `pontos_call` e `pontos_mensagem` com `/economy_config`.
+- Ajustar `min_call_segundos` e `min_mensagens` para evitar farm facil.
+- Conferir `limite_admin` para distribuicoes manuais.
+- Comparar ganho diario, pacote inicial, precos da loja e apostas maximas.
+- Usar `/admin_analytics` apos alguns dias para avaliar inflacao de pontos.
+
+#### Backups e atualizacao
+
+- Fazer backup de `data/*.sqlite3` e `data/*.db` antes de atualizar.
+- Manter o volume `./data:/app/data` ativo no Docker.
+- Evitar apagar mensagens publicas com botoes persistentes sem publicar novas.
+- Em homologacao, usar `GUILD_ID` para sincronizacao rapida de comandos.
+- `warnings.py` fica como milestone futura, pois advertencias precisam de
+  persistencia, consulta e auditoria proprias.

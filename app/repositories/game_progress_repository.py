@@ -31,6 +31,13 @@ class GameProgressRepositoryProtocol(Protocol):
         achievement: GameAchievement,
     ) -> GameAchievement: ...
 
+    async def update_achievement_reward(
+        self,
+        guild_id: int,
+        achievement_key: str,
+        reward_points: int,
+    ) -> GameAchievement | None: ...
+
     async def unlock_achievement(
         self,
         guild_id: int,
@@ -43,6 +50,12 @@ class GameProgressRepositoryProtocol(Protocol):
         guild_id: int,
         user_id: int,
     ) -> list[UserGameAchievement]: ...
+
+    async def reset_user_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> dict[str, int]: ...
 
     async def get_jackpot(
         self,
@@ -132,6 +145,19 @@ class SQLiteGameProgressRepository:
     ) -> GameAchievement:
         return await asyncio.to_thread(self._ensure_achievement_sync, achievement)
 
+    async def update_achievement_reward(
+        self,
+        guild_id: int,
+        achievement_key: str,
+        reward_points: int,
+    ) -> GameAchievement | None:
+        return await asyncio.to_thread(
+            self._update_achievement_reward_sync,
+            guild_id,
+            achievement_key,
+            reward_points,
+        )
+
     async def unlock_achievement(
         self,
         guild_id: int,
@@ -152,6 +178,17 @@ class SQLiteGameProgressRepository:
     ) -> list[UserGameAchievement]:
         return await asyncio.to_thread(
             self._list_user_achievements_sync,
+            guild_id,
+            user_id,
+        )
+
+    async def reset_user_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._reset_user_profile_sync,
             guild_id,
             user_id,
         )
@@ -198,6 +235,9 @@ class SQLiteGameProgressRepository:
         return await asyncio.to_thread(
             self._get_or_create_seasonal_theme_sync, guild_id
         )
+
+    async def get_admin_summary(self, guild_id: int) -> dict[str, int]:
+        return await asyncio.to_thread(self._get_admin_summary_sync, guild_id)
 
     async def set_seasonal_theme(
         self,
@@ -298,12 +338,19 @@ class SQLiteGameProgressRepository:
                         name TEXT NOT NULL,
                         description TEXT NOT NULL,
                         reward_points INTEGER NOT NULL DEFAULT 0,
+                        reward_points_customized INTEGER NOT NULL DEFAULT 0,
                         badge_emoji TEXT,
                         is_active INTEGER NOT NULL DEFAULT 1,
                         created_at TEXT NOT NULL,
                         UNIQUE(guild_id, achievement_key)
                     )
                     """)
+                self._ensure_column(
+                    connection,
+                    "game_achievements",
+                    "reward_points_customized",
+                    "INTEGER NOT NULL DEFAULT 0",
+                )
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS user_game_achievements (
                         guild_id INTEGER NOT NULL,
@@ -396,7 +443,11 @@ class SQLiteGameProgressRepository:
                     ON CONFLICT(guild_id, achievement_key) DO UPDATE SET
                         name = excluded.name,
                         description = excluded.description,
-                        reward_points = excluded.reward_points,
+                        reward_points = CASE
+                            WHEN game_achievements.reward_points_customized = 1
+                                THEN game_achievements.reward_points
+                            ELSE excluded.reward_points
+                        END,
                         badge_emoji = excluded.badge_emoji,
                         is_active = excluded.is_active
                     """,
@@ -420,6 +471,30 @@ class SQLiteGameProgressRepository:
         if ensured is None:
             raise RuntimeError("Nao foi possivel salvar a conquista.")
         return ensured
+
+    def _update_achievement_reward_sync(
+        self,
+        guild_id: int,
+        achievement_key: str,
+        reward_points: int,
+    ) -> GameAchievement | None:
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    """
+                    UPDATE game_achievements
+                    SET reward_points = ?,
+                        reward_points_customized = 1
+                    WHERE guild_id = ? AND achievement_key = ?
+                    """,
+                    (reward_points, guild_id, achievement_key),
+                )
+                connection.commit()
+
+        if cursor.rowcount == 0:
+            return None
+        return self._get_achievement_sync(guild_id, achievement_key)
 
     def _unlock_achievement_sync(
         self,
@@ -662,6 +737,88 @@ class SQLiteGameProgressRepository:
                 else:
                     connection.rollback()
         return self._row_to_seasonal(row)
+
+    def _get_admin_summary_sync(self, guild_id: int) -> dict[str, int]:
+        with self._lock:
+            with self._connect() as connection:
+                achievement_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS unlocked_achievements,
+                        COUNT(DISTINCT user_id) AS achievement_users
+                    FROM user_game_achievements
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                race_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total_races,
+                        COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0)
+                            AS open_races,
+                        COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0)
+                            AS finished_races,
+                        COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0)
+                            AS cancelled_races
+                    FROM collective_races
+                    WHERE guild_id = ?
+                    """,
+                    (
+                        CollectiveRaceStatus.OPEN.value,
+                        CollectiveRaceStatus.FINISHED.value,
+                        CollectiveRaceStatus.CANCELLED.value,
+                        guild_id,
+                    ),
+                ).fetchone()
+                race_bet_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS race_bets,
+                        COALESCE(SUM(stake), 0) AS race_stake,
+                        COALESCE(SUM(potential_payout), 0) AS race_payout
+                    FROM collective_race_bets
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+
+        return {
+            "unlocked_achievements": int(achievement_row["unlocked_achievements"] or 0),
+            "achievement_users": int(achievement_row["achievement_users"] or 0),
+            "total_races": int(race_row["total_races"] or 0),
+            "open_races": int(race_row["open_races"] or 0),
+            "finished_races": int(race_row["finished_races"] or 0),
+            "cancelled_races": int(race_row["cancelled_races"] or 0),
+            "race_bets": int(race_bet_row["race_bets"] or 0),
+            "race_stake": int(race_bet_row["race_stake"] or 0),
+            "race_payout": int(race_bet_row["race_payout"] or 0),
+        }
+
+    def _reset_user_profile_sync(self, guild_id: int, user_id: int) -> dict[str, int]:
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                deleted_achievements = connection.execute(
+                    """
+                    DELETE FROM user_game_achievements
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_race_bets = connection.execute(
+                    """
+                    DELETE FROM collective_race_bets
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                connection.commit()
+
+        return {
+            "achievements": max(0, deleted_achievements),
+            "collective_race_bets": max(0, deleted_race_bets),
+        }
 
     def _set_seasonal_theme_sync(
         self,
@@ -982,6 +1139,18 @@ class SQLiteGameProgressRepository:
                     (race_id,),
                 ).fetchall()
         return [self._row_to_collective_race_bet(row) for row in rows]
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        columns = connection.execute(f"PRAGMA table_info({table})").fetchall()
+        if any(existing["name"] == column for existing in columns):
+            return
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @staticmethod
     def _get_achievement_row(

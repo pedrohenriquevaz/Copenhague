@@ -38,6 +38,12 @@ class MatchBetRepositoryProtocol(Protocol):
 
     async def list_active_matches(self, guild_id: int) -> list[MatchBetMatch]: ...
 
+    async def reset_user_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> dict[str, int]: ...
+
     async def update_odds(
         self,
         match_id: int,
@@ -97,6 +103,20 @@ class SQLiteMatchBetRepository:
 
     async def list_active_matches(self, guild_id: int) -> list[MatchBetMatch]:
         return await asyncio.to_thread(self._list_active_matches_sync, guild_id)
+
+    async def reset_user_profile(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._reset_user_profile_sync,
+            guild_id,
+            user_id,
+        )
+
+    async def get_admin_summary(self, guild_id: int) -> dict[str, int]:
+        return await asyncio.to_thread(self._get_admin_summary_sync, guild_id)
 
     async def update_odds(
         self,
@@ -304,6 +324,76 @@ class SQLiteMatchBetRepository:
                     (guild_id,),
                 ).fetchall()
         return [self._row_to_match(row) for row in rows]
+
+    def _get_admin_summary_sync(self, guild_id: int) -> dict[str, int]:
+        with self._lock:
+            with self._connect() as connection:
+                match_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total_matches,
+                        COALESCE(SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END), 0)
+                            AS active_matches
+                    FROM match_bet_matches
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                ticket_rows = connection.execute(
+                    """
+                    SELECT
+                        status,
+                        COUNT(*) AS ticket_count,
+                        COALESCE(SUM(stake), 0) AS total_stake,
+                        COALESCE(SUM(potential_payout), 0) AS total_payout
+                    FROM match_bet_tickets
+                    WHERE guild_id = ?
+                    GROUP BY status
+                    """,
+                    (guild_id,),
+                ).fetchall()
+
+        summary = {
+            "total_matches": int(match_row["total_matches"] or 0),
+            "active_matches": int(match_row["active_matches"] or 0),
+            "total_tickets": 0,
+            "open_tickets": 0,
+            "won_tickets": 0,
+            "lost_tickets": 0,
+            "refunded_tickets": 0,
+            "total_stake": 0,
+            "potential_payout": 0,
+        }
+        status_key = {
+            MatchBetTicketStatus.OPEN.value: "open_tickets",
+            MatchBetTicketStatus.WON.value: "won_tickets",
+            MatchBetTicketStatus.LOST.value: "lost_tickets",
+            MatchBetTicketStatus.REFUNDED.value: "refunded_tickets",
+        }
+        for row in ticket_rows:
+            ticket_count = int(row["ticket_count"] or 0)
+            summary["total_tickets"] += ticket_count
+            summary["total_stake"] += int(row["total_stake"] or 0)
+            summary["potential_payout"] += int(row["total_payout"] or 0)
+            key = status_key.get(str(row["status"]))
+            if key:
+                summary[key] = ticket_count
+        return summary
+
+    def _reset_user_profile_sync(self, guild_id: int, user_id: int) -> dict[str, int]:
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                deleted_tickets = connection.execute(
+                    """
+                    DELETE FROM match_bet_tickets
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                connection.commit()
+
+        return {"match_bet_tickets": max(0, deleted_tickets)}
 
     def _update_odds_sync(
         self,
