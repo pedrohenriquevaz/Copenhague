@@ -265,6 +265,25 @@ class BlackjackService:
                     "payout_multiplier_percent": session.payout_multiplier_percent,
                 },
             )
+        credit = await self._repository.apply_credit_protection(
+            guild_id=session.guild_id,
+            user_id=session.user_id,
+            game_key="blackjack",
+            stake=session.bet,
+            is_loss=outcome
+            in {
+                BlackjackOutcome.DEALER_BLACKJACK,
+                BlackjackOutcome.DEALER_WIN,
+                BlackjackOutcome.EXPIRED,
+                BlackjackOutcome.PLAYER_BUST,
+            },
+            metadata={
+                "source": "blackjack",
+                "outcome": outcome.value,
+                "bet": session.bet,
+            },
+        )
+        session.cashback = credit.cashback_amount
         await self._unlock_blackjack_finish_progress(session)
 
     async def _unlock_blackjack_start_progress(
@@ -344,7 +363,7 @@ class BlackjackService:
         session = self._sessions.get((guild_id, user_id))
         if session is None:
             raise BlackjackValidationError(
-                "Voce nao possui uma partida de BlackJack em andamento."
+                "Voce não possui uma partida de BlackJack em andamento."
             )
         return session
 
@@ -368,11 +387,11 @@ class BlackjackService:
     def _validate_bet(cls, bet: int, min_bet: int, max_bet: int) -> None:
         if bet < min_bet:
             raise BlackjackValidationError(
-                f"A aposta minima e de {min_bet} ponto(s)."
+                f"A aposta mínima e de {min_bet} ponto(s)."
             )
         if bet > max_bet:
             raise BlackjackValidationError(
-                f"A aposta maxima e de {max_bet} ponto(s)."
+                f"A aposta máxima e de {max_bet} ponto(s)."
             )
 
     async def _validate_daily_profit_limit(
@@ -393,7 +412,7 @@ class BlackjackService:
         )
         if current_profit >= settings.casino_daily_profit_limit:
             raise BlackjackValidationError(
-                "Voce atingiu o teto diario de lucro dos jogos."
+                "Voce atingiu o teto diário de lucro dos jogos."
             )
 
     @staticmethod

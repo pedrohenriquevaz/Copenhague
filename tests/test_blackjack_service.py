@@ -1,21 +1,66 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 
+import discord
 import pytest
+from PIL import Image
 
-from app.models.casino import BlackjackCard, BlackjackOutcome, CardRank, CardSuit
+from app.models.casino import (
+    BlackjackCard,
+    BlackjackOutcome,
+    BlackjackSession,
+    CardRank,
+    CardSuit,
+)
 from app.models.economy import EconomyTransactionType
+from app.models.guild_settings import GuildEconomySettings
 from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.services.blackjack_service import (
     BlackjackService,
     BlackjackValidationError,
     calculate_hand_value,
 )
+from app.ui.blackjack_table_image import (
+    BLACKJACK_TABLE_FILENAME,
+    render_blackjack_table_image,
+)
+from app.ui.blackjack_view import BlackjackView, build_blackjack_embed
 
 
 def card(rank: CardRank, suit: CardSuit = CardSuit.SPADES) -> BlackjackCard:
     return BlackjackCard(rank=rank, suit=suit)
+
+
+def _blackjack_session() -> BlackjackSession:
+    return BlackjackSession(guild_id=1, user_id=10, bet=100, deck=[])
+
+
+def _settings() -> GuildEconomySettings:
+    now = datetime.now(UTC)
+    return GuildEconomySettings(
+        guild_id=1,
+        currency_name="pontos",
+        voice_points_per_minute=2,
+        message_points=1,
+        activity_provider="native",
+        economy_channel_id=None,
+        shop_channel_id=None,
+        staff_log_channel_id=None,
+        min_voice_seconds_to_claim=60,
+        min_messages_to_claim=1,
+        ignore_afk_channel=True,
+        ignore_bots=True,
+        count_voice_when_alone=False,
+        max_admin_grant_per_use=100000,
+        casino_max_bet=1000,
+        casino_daily_profit_limit=5000,
+        economy_manager_role_id=None,
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def test_calculates_blackjack_hand_with_flexible_aces() -> None:
@@ -49,6 +94,80 @@ def test_calculates_blackjack_hand_with_flexible_aces() -> None:
         )
         == 22
     )
+
+
+def test_blackjack_embed_uses_compact_table_layout() -> None:
+    session = _blackjack_session()
+    session.player_hand.add(card(CardRank.ACE, CardSuit.SPADES))
+    session.player_hand.add(card(CardRank.KING, CardSuit.HEARTS))
+    session.dealer_hand.add(card(CardRank.SIX, CardSuit.DIAMONDS))
+
+    embed = build_blackjack_embed(
+        session,
+        _settings(),
+        player_display_name="Copenhague",
+        player_avatar_url="https://cdn.example.com/avatar.png",
+    )
+
+    assert embed.title == "♣ Blackjack"
+    assert embed.description is not None
+    assert "**Banca (6+?):**" in embed.description
+    assert "`♦ 6` `? ?`" in embed.description
+    assert "**Copenhague (21):**" in embed.description
+    assert "`♠ A` `♥ K`" in embed.description
+    assert embed.thumbnail.url == "https://cdn.example.com/avatar.png"
+    assert embed.image.url == f"attachment://{BLACKJACK_TABLE_FILENAME}"
+
+
+def test_blackjack_table_image_renders_png() -> None:
+    session = _blackjack_session()
+    session.player_hand.add(card(CardRank.ACE, CardSuit.SPADES))
+    session.player_hand.add(card(CardRank.KING, CardSuit.HEARTS))
+    session.dealer_hand.add(card(CardRank.SIX, CardSuit.DIAMONDS))
+
+    image_bytes = render_blackjack_table_image(
+        session,
+        _settings(),
+        player_display_name="Copenhague",
+    )
+
+    assert image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    with Image.open(BytesIO(image_bytes)) as image:
+        assert image.size == (960, 640)
+        assert image.mode == "RGB"
+
+
+def test_blackjack_view_exposes_visual_buttons() -> None:
+    active = BlackjackView(
+        object(),  # type: ignore[arg-type]
+        _blackjack_session(),
+        _settings(),
+    )
+    labels = {
+        item.label: item.disabled
+        for item in active.children
+        if isinstance(item, discord.ui.Button)
+    }
+
+    assert labels["Pedir carta"] is False
+    assert labels["Split"] is True
+    assert labels["Seguro"] is True
+    assert labels["Começar nova partida"] is True
+
+    finished_session = _blackjack_session()
+    finished_session.outcome = BlackjackOutcome.PLAYER_WIN
+    finished = BlackjackView(
+        object(),  # type: ignore[arg-type]
+        finished_session,
+        _settings(),
+    )
+    finished_labels = {
+        item.label: item.disabled
+        for item in finished.children
+        if isinstance(item, discord.ui.Button)
+    }
+    assert finished_labels["Pedir carta"] is True
+    assert finished_labels["Começar nova partida"] is False
 
 
 async def test_blackjack_natural_pays_two_and_half_times(tmp_path: Path) -> None:
@@ -181,7 +300,7 @@ async def test_blackjack_uses_configured_min_bet(tmp_path: Path) -> None:
         ],
     )
 
-    with pytest.raises(BlackjackValidationError, match="aposta minima"):
+    with pytest.raises(BlackjackValidationError, match="aposta mínima"):
         await service.start_game(guild_id=1, user_id=10, bet=50)
 
 

@@ -197,6 +197,7 @@ class EconomyAdminCog(commands.Cog):
         min_raspadinha="Custo minimo permitido para comprar raspadinhas.",
         min_corrida_coletiva="Aposta minima para corrida coletiva.",
         min_bet_partidas="Aposta minima para bets de partidas.",
+        juros_poupanca="Taxa de juros da poupança em percentual ao dia.",
         cargo_gerente="Cargo que tambem pode gerenciar economia.",
         canal_economia="Canal principal do painel de economia.",
         canal_loja="Canal principal da loja.",
@@ -225,6 +226,7 @@ class EconomyAdminCog(commands.Cog):
         min_raspadinha: int | None = None,
         min_corrida_coletiva: int | None = None,
         min_bet_partidas: int | None = None,
+        juros_poupanca: float | None = None,
         cargo_gerente: discord.Role | None = None,
         canal_economia: discord.TextChannel | discord.Thread | None = None,
         canal_loja: discord.TextChannel | discord.Thread | None = None,
@@ -268,6 +270,7 @@ class EconomyAdminCog(commands.Cog):
                 casino_min_bet_scratch_card=min_raspadinha,
                 casino_min_bet_collective_race=min_corrida_coletiva,
                 casino_min_bet_match_bet=min_bet_partidas,
+                savings_daily_interest_percent=juros_poupanca,
                 economy_manager_role_id=cargo_gerente.id if cargo_gerente else None,
                 economy_channel_id=canal_economia.id if canal_economia else None,
                 shop_channel_id=canal_loja.id if canal_loja else None,
@@ -321,6 +324,56 @@ class EconomyAdminCog(commands.Cog):
         await interaction.followup.send(
             content=f"Limitadores dos jogos {status}.",
             embed=_build_economy_config_embed(settings),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="truco_config",
+        description="Configura os limites administrativos do Truco.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        aposta_minima="Aposta mínima por jogador em partidas de Truco.",
+    )
+    async def truco_config(
+        self,
+        interaction: discord.Interaction,
+        aposta_minima: int,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando só pode ser usado em servidores.",
+                ephemeral=True,
+            )
+            return
+        if not await self._can_manage_economy(interaction):
+            await interaction.response.send_message(
+                "Você não tem permissão para usar esse comando.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            settings = await self.service.configure_settings(
+                guild_id=interaction.guild.id,
+                actor_id=interaction.user.id,
+                casino_min_bet_truco=aposta_minima,
+            )
+        except EconomyValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        minimum = format_points(
+            settings.casino_min_bet_truco,
+            settings.currency_name,
+        )
+        await interaction.followup.send(
+            (
+                "Configuração do Truco atualizada.\n"
+                f"Aposta mínima: **{minimum}**"
+            ),
             ephemeral=True,
         )
 
@@ -380,6 +433,155 @@ class EconomyAdminCog(commands.Cog):
                 f"Quantidade: {format_points(quantidade, settings.currency_name)}\n"
                 f"Motivo: {motivo}\n"
                 f"Novo saldo: {formatted_balance}"
+            ),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="credit_saves_add",
+        description="Adiciona saves de proteção de crédito a um usuário.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def credit_saves_add(
+        self,
+        interaction: discord.Interaction,
+        usuario: discord.Member,
+        quantidade: int,
+        motivo: str,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado em servidores.",
+                ephemeral=True,
+            )
+            return
+        if usuario.bot:
+            await interaction.response.send_message(
+                "Não é possível atribuir saves a bots.",
+                ephemeral=True,
+            )
+            return
+        if not await self._can_manage_economy(interaction):
+            await interaction.response.send_message(
+                "Voce nao tem permissao para usar esse comando.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            result = await self.service.add_credit_saves(
+                guild_id=interaction.guild.id,
+                user_id=usuario.id,
+                actor_id=interaction.user.id,
+                amount=quantidade,
+                reason=motivo,
+            )
+        except EconomyValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            (
+                "Saves adicionados com sucesso.\n\n"
+                f"Usuário: {usuario.mention}\n"
+                f"Adicionados: **{quantidade}**\n"
+                f"Saves atuais: **{result.after.saves}**\n"
+                f"Derrotas seguidas atuais: **{result.after.lose_streak}**"
+            ),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="credit_saves_remove",
+        description="Remove saves de proteção de crédito de um usuário.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def credit_saves_remove(
+        self,
+        interaction: discord.Interaction,
+        usuario: discord.Member,
+        quantidade: int,
+        motivo: str,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado em servidores.",
+                ephemeral=True,
+            )
+            return
+        if usuario.bot:
+            await interaction.response.send_message(
+                "Não é possível remover saves de bots.",
+                ephemeral=True,
+            )
+            return
+        if not await self._can_manage_economy(interaction):
+            await interaction.response.send_message(
+                "Voce nao tem permissao para usar esse comando.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            result = await self.service.remove_credit_saves(
+                guild_id=interaction.guild.id,
+                user_id=usuario.id,
+                actor_id=interaction.user.id,
+                amount=quantidade,
+                reason=motivo,
+            )
+        except EconomyValidationError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            (
+                "Saves removidos com sucesso.\n\n"
+                f"Usuário: {usuario.mention}\n"
+                f"Removidos: **{quantidade}**\n"
+                f"Saves atuais: **{result.after.saves}**\n"
+                f"Derrotas seguidas atuais: **{result.after.lose_streak}**"
+            ),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="credit_saves_status",
+        description="Consulta os saves e derrotas seguidas de um usuário.",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def credit_saves_status(
+        self,
+        interaction: discord.Interaction,
+        usuario: discord.Member,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando so pode ser usado em servidores.",
+                ephemeral=True,
+            )
+            return
+        if not await self._can_manage_economy(interaction):
+            await interaction.response.send_message(
+                "Voce nao tem permissao para usar esse comando.",
+                ephemeral=True,
+            )
+            return
+
+        state = await self.service.get_credit_protection_state(
+            interaction.guild.id,
+            usuario.id,
+        )
+        await interaction.response.send_message(
+            (
+                f"Proteção de crédito de {usuario.mention}\n\n"
+                f"Saves: **{state.saves}**\n"
+                f"Derrotas seguidas: **{state.lose_streak}**"
             ),
             ephemeral=True,
         )
@@ -459,8 +661,20 @@ class EconomyAdminCog(commands.Cog):
             user_id,
         )
         related_counts.update(match_counts)
+        truco_counts = await self.bot.truco_repository.reset_user_profile(  # type: ignore[attr-defined]
+            guild_id,
+            user_id,
+        )
+        related_counts.update(truco_counts)
+        uno_counts = await self.bot.uno_repository.reset_user_profile(  # type: ignore[attr-defined]
+            guild_id,
+            user_id,
+        )
+        related_counts.update(uno_counts)
         await self.bot.casino_service.reset_user_state(guild_id, user_id)  # type: ignore[attr-defined]
         await self.bot.blackjack_service.reset_user_state(guild_id, user_id)  # type: ignore[attr-defined]
+        await self.bot.truco_service.reset_user_state(guild_id, user_id)  # type: ignore[attr-defined]
+        await self.bot.uno_service.reset_user_state(guild_id, user_id)  # type: ignore[attr-defined]
 
         try:
             result = await self.service.reset_user_profile(
@@ -570,6 +784,11 @@ class EconomyAdminCog(commands.Cog):
             inline=True,
         )
         embed.add_field(
+            name="Poupança",
+            value=_format_interest_bps(settings.savings_daily_interest_bps),
+            inline=True,
+        )
+        embed.add_field(
             name="Apostas minimas",
             value=_format_min_bets(settings),
             inline=False,
@@ -646,6 +865,11 @@ def _build_economy_config_embed(settings) -> discord.Embed:
         inline=True,
     )
     embed.add_field(
+        name="Poupança",
+        value=_format_interest_bps(settings.savings_daily_interest_bps),
+        inline=True,
+    )
+    embed.add_field(
         name="Apostas minimas",
         value=_format_min_bets(settings),
         inline=False,
@@ -687,6 +911,12 @@ def _format_limiters_status(settings) -> str:
     return "Ativados" if settings.casino_limiters_enabled else "Desativados"
 
 
+def _format_interest_bps(value: int) -> str:
+    percent = value / 100
+    formatted = f"{percent:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+    return f"{formatted}% ao dia"
+
+
 def _format_min_bets(settings) -> str:
     items = (
         ("Cara/coroa", settings.casino_min_bet_coin_flip),
@@ -699,6 +929,7 @@ def _format_min_bets(settings) -> str:
         ("Raspadinha", settings.casino_min_bet_scratch_card),
         ("Corrida coletiva", settings.casino_min_bet_collective_race),
         ("Bets partidas", settings.casino_min_bet_match_bet),
+        ("Truco", settings.casino_min_bet_truco),
     )
     return "\n".join(
         f"{label}: {format_points(value, settings.currency_name)}"
@@ -714,6 +945,8 @@ def _format_reset_counts(
         "Carteiras": result.deleted_wallets,
         "Transacoes": result.deleted_transactions,
         "Compras da loja": result.deleted_purchases,
+        "Proteção de crédito": result.deleted_credit_protection,
+        "Poupança": result.deleted_savings_accounts,
         "Resgates da economia": result.deleted_reward_claims,
         "Cursores de atividade": result.deleted_activity_cursors,
         "Mensagens de atividade": result.deleted_message_stats,
@@ -721,6 +954,8 @@ def _format_reset_counts(
         "Conquistas": related_counts.get("achievements", 0),
         "Apostas em corridas": related_counts.get("collective_race_bets", 0),
         "Tickets de partidas": related_counts.get("match_bet_tickets", 0),
+        "Partidas de Truco ativas": related_counts.get("active_games", 0),
+        "Partidas de UNO ativas": related_counts.get("active_uno_games", 0),
     }
     lines = [f"- {label}: **{count}**" for label, count in counts.items() if count]
     if not lines:

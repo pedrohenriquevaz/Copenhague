@@ -3,15 +3,23 @@ from __future__ import annotations
 import gc
 import sqlite3
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import discord
 import pytest
+from PIL import Image
 
 from app.cogs.economy.activity import ActivityCog
-from app.models.economy import EconomyTransactionType
+from app.models.casino import CoinSide
+from app.models.economy import (
+    CreditProtectionState,
+    EconomyTransactionType,
+    UserWallet,
+)
+from app.models.giveaway import serialize_datetime, utc_now
 from app.models.guild_settings import GuildEconomySettings
 from app.models.shop import (
     LevelConfig,
@@ -23,10 +31,17 @@ from app.models.shop import (
 )
 from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.services.activity_service import ActivityService
+from app.services.casino_service import CasinoService
 from app.services.economy_service import EconomyService, EconomyValidationError
 from app.services.shop_service import ShopService
 from app.ui.economy_panel import EconomyPanelView
-from app.utils.embeds import build_economy_panel_embed, build_shop_embed
+from app.ui.ranking_image import RANKING_IMAGE_FILENAME, render_ranking_podium_image
+from app.utils.embeds import (
+    build_economy_panel_embed,
+    build_profile_badges,
+    build_profile_embed,
+    build_shop_embed,
+)
 
 
 async def test_economy_admin_points_and_history() -> None:
@@ -197,6 +212,14 @@ async def test_reset_user_profile_clears_economy_activity_and_shop(
         is_bot=False,
     )
     await activity.close_voice_sessions(guild_id=1, user_id=10, is_bot=False)
+    await economy.add_credit_saves(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=2,
+        reason="teste",
+    )
+    await economy.deposit_savings(guild_id=1, user_id=10, amount=100)
     purchase = await shop.purchase_reward(
         guild_id=1,
         user_id=10,
@@ -232,13 +255,15 @@ async def test_reset_user_profile_clears_economy_activity_and_shop(
     assert level_purchase.status is LevelUpgradeStatus.SUCCESS
     assert result.wallet_before is not None
     assert result.deleted_wallets == 1
-    assert result.deleted_transactions == 5
+    assert result.deleted_transactions == 6
     assert result.deleted_reward_claims == 1
     assert result.deleted_activity_cursors == 1
     assert result.deleted_message_stats == 1
     assert result.deleted_voice_sessions == 1
     assert result.deleted_purchases == 1
     assert result.deleted_level_upgrades == 1
+    assert result.deleted_credit_protection == 1
+    assert result.deleted_savings_accounts == 1
     assert wallet.balance == 0
     assert wallet.total_earned == 0
     assert wallet.total_spent == 0
@@ -319,6 +344,7 @@ async def test_economy_config_and_admin_summary() -> None:
             casino_min_bet_collective_race=90,
             casino_min_bet_match_bet=100,
             casino_limiters_enabled=False,
+            savings_daily_interest_percent=1.5,
             economy_manager_role_id=123,
             economy_channel_id=111,
             shop_channel_id=222,
@@ -358,10 +384,12 @@ async def test_economy_config_and_admin_summary() -> None:
         assert settings.casino_min_bet_collective_race == 90
         assert settings.casino_min_bet_match_bet == 100
         assert settings.casino_limiters_enabled is False
+        assert settings.savings_daily_interest_bps == 150
         assert settings.economy_manager_role_id == 123
         assert settings.staff_log_channel_id == 333
         assert summary["wallets"]["count"] == 1
         assert summary["wallets"]["balance"] == 75
+        assert summary["savings"]["balance"] == 0
         assert summary["transactions"]["ADMIN_GIVE"]["in"] == 100
         assert summary["transactions"]["ADMIN_REMOVE"]["out"] == 25
         assert summary["audit"]["count"] == 3
@@ -383,6 +411,65 @@ async def test_economy_config_rejects_min_bet_above_max(tmp_path: Path) -> None:
             casino_max_bet=100,
             casino_min_bet_duel=101,
         )
+
+
+async def test_savings_deposit_lock_interest_and_withdraw(tmp_path: Path) -> None:
+    db_path = tmp_path / "savings.sqlite3"
+    repository = SQLiteEconomyRepository(db_path)
+    economy = EconomyService(repository)
+    await economy.configure_settings(
+        guild_id=1,
+        actor_id=99,
+        savings_daily_interest_percent=10,
+    )
+    await economy.give_points(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=1000,
+        reason="seed",
+    )
+
+    with pytest.raises(EconomyValidationError, match="70%"):
+        await economy.deposit_savings(guild_id=1, user_id=10, amount=701)
+
+    deposit = await economy.deposit_savings(guild_id=1, user_id=10, amount=700)
+    assert deposit.overview.wallet.balance == 300
+    assert deposit.overview.account.balance == 700
+    assert deposit.overview.account.locked_until is not None
+    assert deposit.transaction.type is EconomyTransactionType.SAVINGS_DEPOSIT
+
+    with pytest.raises(EconomyValidationError, match="bloqueada"):
+        await economy.withdraw_savings(guild_id=1, user_id=10, amount=1)
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE user_savings_accounts
+            SET last_interest_at = ?,
+                locked_until = ?
+            WHERE guild_id = ? AND user_id = ?
+            """,
+            (
+                serialize_datetime(utc_now() - timedelta(days=1, minutes=1)),
+                serialize_datetime(utc_now() - timedelta(minutes=1)),
+                1,
+                10,
+            ),
+        )
+
+    overview = await economy.get_savings_overview(1, 10)
+    assert overview.interest_applied == 70
+    assert overview.account.balance == 770
+    assert overview.account.total_interest_earned == 70
+
+    withdrawal = await economy.withdraw_savings(guild_id=1, user_id=10, amount=770)
+    assert withdrawal.overview.wallet.balance == 1070
+    assert withdrawal.overview.account.balance == 0
+    assert withdrawal.transaction.type is EconomyTransactionType.SAVINGS_WITHDRAW
+    summary = await repository.get_admin_summary(1)
+    assert summary["savings"]["balance"] == 0
+    assert summary["savings"]["interest_earned"] == 70
 
 
 async def test_activity_conversion_uses_delta_only() -> None:
@@ -583,6 +670,133 @@ async def test_shop_purchase_debits_wallet_and_stock() -> None:
         _cleanup_sqlite(db_path)
 
 
+async def test_credit_protection_cashback_consumes_saves_and_resets_on_win(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "credit_protection.sqlite3")
+    economy = EconomyService(repository)
+    casino = CasinoService(
+        repository,
+        rng=_FixedCoinRng(
+            [
+                CoinSide.COROA,
+                CoinSide.COROA,
+                CoinSide.COROA,
+                CoinSide.COROA,
+                CoinSide.COROA,
+                CoinSide.COROA,
+                CoinSide.CARA,
+            ]
+        ),
+        cooldown_seconds=0,
+    )
+
+    await economy.give_points(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=1000,
+        reason="seed",
+    )
+    added = await economy.add_credit_saves(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=2,
+        reason="teste",
+    )
+
+    assert added.after.saves == 2
+
+    first_losses = [
+        await casino.play_coin_flip(
+            guild_id=1,
+            user_id=10,
+            bet=100,
+            choice="cara",
+        )
+        for _ in range(3)
+    ]
+    fourth = await casino.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+    fifth = await casino.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+    sixth = await casino.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+    win = await casino.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+
+    state = await economy.get_credit_protection_state(1, 10)
+    wallet = await economy.get_wallet(1, 10)
+    history = await economy.list_history(1, 10, limit=20)
+    cashback_transactions = [
+        transaction
+        for transaction in history
+        if transaction.type is EconomyTransactionType.CREDIT_CASHBACK
+    ]
+
+    assert [result.cashback for result in first_losses] == [0, 0, 0]
+    assert fourth.cashback == 50
+    assert fourth.profit == -50
+    assert fifth.cashback == 80
+    assert fifth.profit == -20
+    assert sixth.cashback == 0
+    assert win.payout == 140
+    assert win.profit == 40
+    assert state.saves == 0
+    assert state.lose_streak == 0
+    assert wallet.balance == 570
+    assert [transaction.amount for transaction in cashback_transactions] == [80, 50]
+
+
+async def test_credit_saves_remove_rejects_negative_balance(tmp_path: Path) -> None:
+    repository = SQLiteEconomyRepository(tmp_path / "credit_saves.sqlite3")
+    economy = EconomyService(repository)
+
+    added = await economy.add_credit_saves(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=4,
+        reason="bonus",
+    )
+    removed = await economy.remove_credit_saves(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=1,
+        reason="ajuste",
+    )
+
+    assert added.after.saves == 4
+    assert removed.before.saves == 4
+    assert removed.after.saves == 3
+    with pytest.raises(EconomyValidationError, match="saves suficientes"):
+        await economy.remove_credit_saves(
+            guild_id=1,
+            user_id=10,
+            actor_id=99,
+            amount=4,
+            reason="ajuste",
+        )
+
+
 async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
     repository = SQLiteEconomyRepository(tmp_path / "level_upgrades.sqlite3")
     economy = EconomyService(repository)
@@ -595,6 +809,7 @@ async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
         price=200,
         is_active=True,
         actor_id=99,
+        saves_reward=2,
     )
     await shop.configure_level(
         guild_id=1,
@@ -603,6 +818,7 @@ async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
         price=500,
         is_active=True,
         actor_id=99,
+        saves_reward=3,
     )
     current_level, next_level, levels = await shop.get_next_level(
         guild_id=1,
@@ -645,6 +861,9 @@ async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
     assert [upgrade.level for upgrade in upgrades] == [1]
     assert history[0].type is EconomyTransactionType.LEVEL_UPGRADE
     assert history[0].metadata["role_id"] == 101
+    assert history[0].metadata["saves_reward"] == 2
+    protection = await economy.get_credit_protection_state(1, 10)
+    assert protection.saves == 2
 
     repeated = await shop.purchase_level_upgrade(
         guild_id=1,
@@ -652,8 +871,26 @@ async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
         level=1,
     )
     wallet_after_repeat = await economy.get_wallet(1, 10)
+    protection_after_repeat = await economy.get_credit_protection_state(1, 10)
     assert repeated.status is LevelUpgradeStatus.ALREADY_OWNED
     assert wallet_after_repeat.balance == 100
+    assert protection_after_repeat.saves == 2
+
+    await economy.give_points(
+        guild_id=1,
+        user_id=10,
+        actor_id=99,
+        amount=500,
+        reason="seed nivel 2",
+    )
+    second_purchase = await shop.purchase_level_upgrade(
+        guild_id=1,
+        user_id=10,
+        level=2,
+    )
+    protection_after_second = await economy.get_credit_protection_state(1, 10)
+    assert second_purchase.status is LevelUpgradeStatus.SUCCESS
+    assert protection_after_second.saves == 5
 
 
 async def test_shop_reward_update_and_remove() -> None:
@@ -676,7 +913,10 @@ async def test_shop_reward_update_and_remove() -> None:
             role_id=None,
             delivery_message=None,
             created_by=99,
+            duration_days=30,
         )
+
+        assert reward.duration_days == 30
 
         updated = await shop.update_reward(
             guild_id=1,
@@ -687,6 +927,7 @@ async def test_shop_reward_update_and_remove() -> None:
             stock_quantity=5,
             stock_mode=StockMode.LIMITED,
             max_per_user=0,
+            duration_days=7,
             is_active=False,
         )
 
@@ -694,6 +935,7 @@ async def test_shop_reward_update_and_remove() -> None:
         assert updated.price == 250
         assert updated.stock_quantity == 5
         assert updated.max_per_user is None
+        assert updated.duration_days == 7
         assert updated.is_active is False
         assert await shop.list_rewards(1) == []
 
@@ -702,11 +944,13 @@ async def test_shop_reward_update_and_remove() -> None:
             reward_id=reward.id,
             actor_id=99,
             stock_mode=StockMode.UNLIMITED,
+            duration_days=0,
             is_active=True,
         )
 
         assert reactivated.stock_quantity is None
         assert reactivated.stock_mode is StockMode.UNLIMITED
+        assert reactivated.duration_days is None
         assert reactivated.is_active is True
         assert [item.id for item in await shop.list_rewards(1)] == [reward.id]
 
@@ -769,6 +1013,7 @@ def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
             created_at=now,
             updated_at=now,
             deleted_at=None,
+            duration_days=7,
         ),
         RewardItem(
             id=1,
@@ -800,6 +1045,7 @@ def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
             created_by=99,
             created_at=now,
             updated_at=now,
+            saves_reward=2,
         ),
     ]
 
@@ -813,14 +1059,27 @@ def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
     assert embed.description is not None
     assert embed.image.url == "https://cdn.example.com/loja.png"
     assert "Escolha uma recompensa no menu abaixo" in embed.description
-    assert "**#3 - VIP Plus**" in embed.description
-    assert "**#1 - Passe Semanal**" in embed.description
+    assert "🎭 **VIP Plus** — 17.000 pontos · Esgotado · 7 dias" in embed.description
+    assert (
+        "🎁 **Passe Semanal** — 8.000 pontos · 10 un. · Permanente"
+        in embed.description
+    )
+    assert "#3" not in embed.description
+    assert "#1" not in embed.description
     assert "Tipo" not in embed.description
-    assert "Preço: 17.000 pontos | Esgotado" in embed.description
-    assert "Preço: 8.000 pontos | Estoque: 10" in embed.description
     assert "**Upgrades de nível**" in embed.description
-    assert "**Nível 1** - <@&321>" in embed.description
-    assert "\n\n**#1 - Passe Semanal**" in embed.description
+    assert "🔰 **Nível 1** · <@&321> · 12.000 pontos · 2 save(s)" in embed.description
+    assert "ativo" not in embed.description
+    assert "inativo" not in embed.description
+
+    admin_embed = build_shop_embed(
+        rewards,
+        settings,
+        levels=levels,
+        show_reward_ids=True,
+    )
+    assert admin_embed.description is not None
+    assert "#3 · VIP Plus" in admin_embed.description
 
 
 def test_economy_panel_embed_accepts_presentation_image() -> None:
@@ -833,7 +1092,7 @@ def test_economy_panel_embed_accepts_presentation_image() -> None:
 
     assert embed.title == "Economia da Comunidade"
     assert embed.image.url == "https://cdn.example.com/economia.png"
-    assert embed.fields[0].name == "Conversao atual"
+    assert embed.fields[0].name == "Conversão atual"
     assert "1 minuto em call = 2 pontos" in embed.fields[0].value
     assert "abrir a loja" not in (embed.description or "")
 
@@ -848,6 +1107,90 @@ def test_economy_panel_view_removes_open_shop_button() -> None:
 
     assert "economy_panel:shop" not in custom_ids
     assert "economy_panel:transfer" in custom_ids
+    assert "economy_panel:savings" in custom_ids
+
+
+def test_profile_embed_shows_avatar_balance_badges_and_levels() -> None:
+    now = datetime.now(UTC)
+    settings = _activity_settings(count_voice_when_alone=False)
+    wallet = UserWallet(
+        guild_id=1,
+        user_id=10,
+        balance=30_000,
+        total_earned=55_000,
+        total_spent=12_000,
+        created_at=now,
+        updated_at=now,
+    )
+    level = LevelConfig(
+        guild_id=1,
+        level=3,
+        role_id=333,
+        price=15_000,
+        is_active=True,
+        created_by=99,
+        created_at=now,
+        updated_at=now,
+        saves_reward=2,
+    )
+    credit_state = CreditProtectionState(
+        guild_id=1,
+        user_id=10,
+        saves=2,
+        lose_streak=1,
+        updated_at=now,
+    )
+    badges = build_profile_badges(
+        wallet,
+        top_wallets=[wallet],
+        achievements=[],
+        level_upgrades=[],
+        credit_state=credit_state,
+        owned_levels=[level],
+    )
+
+    embed = build_profile_embed(
+        wallet,
+        settings,
+        display_name="Copenhague",
+        avatar_url="https://cdn.example.com/avatar.png",
+        badges=badges,
+        owned_levels=[level],
+        ranking_position=1,
+        credit_state=credit_state,
+    )
+
+    assert embed.title == "Perfil de Copenhague"
+    assert embed.thumbnail.url == "https://cdn.example.com/avatar.png"
+    assert embed.fields[0].name == "Saldo atual"
+    assert embed.fields[0].value == "30.000 pontos"
+    assert embed.fields[1].name == "Total ganho"
+    assert embed.fields[1].value == "55.000 pontos"
+    assert "💰 **Magnata**" in embed.fields[5].value
+    assert "🔰 **Nível 3**" in embed.fields[6].value
+
+
+def test_ranking_image_renders_visual_top_ten() -> None:
+    now = datetime.now(UTC)
+    settings = _activity_settings(count_voice_when_alone=False)
+    wallets = [
+        UserWallet(1, 10, 3000, 5000, 2000, now, now),
+        UserWallet(1, 20, 2000, 3000, 1000, now, now),
+        UserWallet(1, 30, 1000, 2000, 1000, now, now),
+        UserWallet(1, 40, 500, 700, 200, now, now),
+    ]
+    names = {10: "Ana", 20: "Bruno", 30: "Carla", 40: "Diego"}
+
+    image_bytes = render_ranking_podium_image(
+        wallets,
+        settings,
+        display_names=names,
+    )
+
+    assert RANKING_IMAGE_FILENAME == "ranking.png"
+    assert image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    with Image.open(BytesIO(image_bytes)) as image:
+        assert image.size == (900, 1280)
 
 
 class _RecordingActivityService:
@@ -882,6 +1225,19 @@ class _StaticSettingsRepository:
 
     async def get_guild_settings(self, guild_id: int) -> GuildEconomySettings:
         return self._settings
+
+
+class _FixedCoinRng:
+    def __init__(self, choices: list[CoinSide]) -> None:
+        self._choices = choices
+
+    def choice(self, options):
+        if not self._choices:
+            raise AssertionError("Acabaram os resultados fixos do RNG.")
+        return self._choices.pop(0)
+
+    def randint(self, start: int, end: int) -> int:
+        return start
 
 
 def _activity_settings(*, count_voice_when_alone: bool) -> GuildEconomySettings:

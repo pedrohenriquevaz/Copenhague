@@ -228,6 +228,7 @@ class MatchBetService:
 
             total_paid = 0
             total_refunded = 0
+            total_cashback = 0
             for ticket in tickets:
                 if ticket.status is MatchBetTicketStatus.WON:
                     if ticket.payout_transaction_id is not None:
@@ -239,6 +240,33 @@ class MatchBetService:
                             transaction_id=transaction_id,
                         )
                     total_paid += paid_amount
+                    await self._economy_repository.apply_credit_protection(
+                        guild_id=ticket.guild_id,
+                        user_id=ticket.user_id,
+                        game_key="match_bet",
+                        stake=ticket.stake,
+                        is_loss=False,
+                        metadata={
+                            "source": "match_bet",
+                            "match_id": ticket.match_id,
+                            "ticket_id": ticket.id,
+                        },
+                    )
+                elif ticket.status is MatchBetTicketStatus.LOST:
+                    credit = await self._economy_repository.apply_credit_protection(
+                        guild_id=ticket.guild_id,
+                        user_id=ticket.user_id,
+                        game_key="match_bet",
+                        stake=ticket.stake,
+                        is_loss=True,
+                        metadata={
+                            "source": "match_bet",
+                            "match_id": ticket.match_id,
+                            "ticket_id": ticket.id,
+                            "team": ticket.team.value,
+                        },
+                    )
+                    total_cashback += credit.cashback_amount
                 elif ticket.status is MatchBetTicketStatus.REFUNDED:
                     if ticket.payout_transaction_id is not None:
                         continue
@@ -272,6 +300,7 @@ class MatchBetService:
             ),
             total_paid=total_paid,
             total_refunded=total_refunded,
+            total_cashback=total_cashback,
         )
 
     async def _pay_ticket(self, ticket: MatchBetTicket) -> tuple[int | None, int]:

@@ -6,8 +6,12 @@ from datetime import timedelta, timezone
 from app.models.economy import (
     BalanceMutationResult,
     BotRewardClaimResult,
+    CreditProtectionAdjustmentResult,
+    CreditProtectionState,
     EconomyTransaction,
     EconomyTransactionType,
+    SavingsOperationResult,
+    SavingsOverview,
     UserProfileResetResult,
     UserTransferResult,
     UserWallet,
@@ -36,6 +40,7 @@ CASINO_MIN_BET_FIELDS: dict[str, str] = {
     "casino_min_bet_scratch_card": "raspadinha",
     "casino_min_bet_collective_race": "corrida coletiva",
     "casino_min_bet_match_bet": "bets de partidas",
+    "casino_min_bet_truco": "Truco",
 }
 
 
@@ -54,6 +59,13 @@ class EconomyService:
 
     async def get_wallet(self, guild_id: int, user_id: int) -> UserWallet:
         return await self._repository.get_wallet(guild_id, user_id)
+
+    async def get_credit_protection_state(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> CreditProtectionState:
+        return await self._repository.get_credit_protection_state(guild_id, user_id)
 
     async def list_history(
         self,
@@ -126,6 +138,8 @@ class EconomyService:
                     "voice_sessions": result.deleted_voice_sessions,
                     "purchases": result.deleted_purchases,
                     "wallets": result.deleted_wallets,
+                    "credit_protection": result.deleted_credit_protection,
+                    "savings_accounts": result.deleted_savings_accounts,
                 },
                 "related_deleted": related_counts or {},
             },
@@ -158,7 +172,9 @@ class EconomyService:
         casino_min_bet_scratch_card: int | None = None,
         casino_min_bet_collective_race: int | None = None,
         casino_min_bet_match_bet: int | None = None,
+        casino_min_bet_truco: int | None = None,
         casino_limiters_enabled: bool | None = None,
+        savings_daily_interest_percent: float | None = None,
         economy_manager_role_id: int | None = None,
         economy_channel_id: int | None = None,
         shop_channel_id: int | None = None,
@@ -222,6 +238,10 @@ class EconomyService:
             updates["casino_daily_profit_limit"] = casino_daily_profit_limit
         if casino_limiters_enabled is not None:
             updates["casino_limiters_enabled"] = int(casino_limiters_enabled)
+        if savings_daily_interest_percent is not None:
+            updates["savings_daily_interest_bps"] = self._percent_to_bps(
+                savings_daily_interest_percent
+            )
         min_bet_updates = {
             "casino_min_bet_coin_flip": casino_min_bet_coin_flip,
             "casino_min_bet_dice": casino_min_bet_dice,
@@ -233,6 +253,7 @@ class EconomyService:
             "casino_min_bet_scratch_card": casino_min_bet_scratch_card,
             "casino_min_bet_collective_race": casino_min_bet_collective_race,
             "casino_min_bet_match_bet": casino_min_bet_match_bet,
+            "casino_min_bet_truco": casino_min_bet_truco,
         }
         for field, value in min_bet_updates.items():
             if value is None:
@@ -468,6 +489,113 @@ class EconomyService:
         )
         return result
 
+    async def get_savings_overview(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> SavingsOverview:
+        settings = await self._repository.get_guild_settings(guild_id)
+        return await self._repository.get_savings_overview(
+            guild_id=guild_id,
+            user_id=user_id,
+            daily_interest_bps=settings.savings_daily_interest_bps,
+        )
+
+    async def deposit_savings(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        amount: int,
+    ) -> SavingsOperationResult:
+        self._validate_positive_amount(amount)
+        settings = await self._repository.get_guild_settings(guild_id)
+        try:
+            return await self._repository.deposit_savings(
+                guild_id=guild_id,
+                user_id=user_id,
+                amount=amount,
+                daily_interest_bps=settings.savings_daily_interest_bps,
+            )
+        except ValueError as exc:
+            raise EconomyValidationError(str(exc)) from exc
+
+    async def withdraw_savings(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        amount: int,
+    ) -> SavingsOperationResult:
+        self._validate_positive_amount(amount)
+        settings = await self._repository.get_guild_settings(guild_id)
+        try:
+            return await self._repository.withdraw_savings(
+                guild_id=guild_id,
+                user_id=user_id,
+                amount=amount,
+                daily_interest_bps=settings.savings_daily_interest_bps,
+            )
+        except ValueError as exc:
+            raise EconomyValidationError(str(exc)) from exc
+
+    async def add_credit_saves(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        actor_id: int,
+        amount: int,
+        reason: str,
+    ) -> CreditProtectionAdjustmentResult:
+        self._validate_positive_amount(amount)
+        reason = self._require_reason(reason)
+        result = await self._repository.adjust_credit_saves(
+            guild_id=guild_id,
+            user_id=user_id,
+            delta=amount,
+        )
+        await self._repository.record_audit_log(
+            guild_id=guild_id,
+            actor_id=actor_id,
+            action="CREDIT_SAVES_ADD",
+            target_user_id=user_id,
+            before_data=self._credit_state_audit_data(result.before),
+            after_data=self._credit_state_audit_data(result.after),
+            reason=reason,
+        )
+        return result
+
+    async def remove_credit_saves(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        actor_id: int,
+        amount: int,
+        reason: str,
+    ) -> CreditProtectionAdjustmentResult:
+        self._validate_positive_amount(amount)
+        reason = self._require_reason(reason)
+        try:
+            result = await self._repository.adjust_credit_saves(
+                guild_id=guild_id,
+                user_id=user_id,
+                delta=-amount,
+            )
+        except ValueError as exc:
+            raise EconomyValidationError(str(exc)) from exc
+        await self._repository.record_audit_log(
+            guild_id=guild_id,
+            actor_id=actor_id,
+            action="CREDIT_SAVES_REMOVE",
+            target_user_id=user_id,
+            before_data=self._credit_state_audit_data(result.before),
+            after_data=self._credit_state_audit_data(result.after),
+            reason=reason,
+        )
+        return result
+
     @staticmethod
     def _validate_positive_amount(amount: int) -> None:
         if amount <= 0:
@@ -529,7 +657,9 @@ class EconomyService:
             "casino_min_bet_scratch_card": settings.casino_min_bet_scratch_card,
             "casino_min_bet_collective_race": settings.casino_min_bet_collective_race,
             "casino_min_bet_match_bet": settings.casino_min_bet_match_bet,
+            "casino_min_bet_truco": settings.casino_min_bet_truco,
             "casino_limiters_enabled": settings.casino_limiters_enabled,
+            "savings_daily_interest_bps": settings.savings_daily_interest_bps,
             "economy_manager_role_id": settings.economy_manager_role_id,
             "economy_channel_id": settings.economy_channel_id,
             "shop_channel_id": settings.shop_channel_id,
@@ -545,3 +675,25 @@ class EconomyService:
             "total_earned": wallet.total_earned,
             "total_spent": wallet.total_spent,
         }
+
+    @staticmethod
+    def _credit_state_audit_data(
+        state: CreditProtectionState,
+    ) -> dict[str, int | str]:
+        return {
+            "guild_id": state.guild_id,
+            "user_id": state.user_id,
+            "saves": state.saves,
+            "lose_streak": state.lose_streak,
+            "updated_at": state.updated_at.isoformat(),
+        }
+
+    @staticmethod
+    def _percent_to_bps(value: float) -> int:
+        if value < 0:
+            raise EconomyValidationError("A taxa da poupança não pode ser negativa.")
+        if value > 100:
+            raise EconomyValidationError(
+                "A taxa da poupança deve ficar entre 0 e 100% ao dia."
+            )
+        return int(round(value * 100))

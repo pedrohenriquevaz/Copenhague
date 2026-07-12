@@ -32,7 +32,7 @@ docker compose logs -f --tail=100 discord-bot
 Preencha pelo menos:
 
 - `DISCORD_TOKEN`
-- `GUILD_ID`, se quiser sincronizacao rapida em um servidor de teste
+- `GUILD_IDS`, se quiser sincronizacao rapida em servidores de teste (separados por virgula); deixe vazio para publicacao global
 - `ENABLE_MEMBERS_INTENT=true`, se usar distribuicao por cargo
 - `ENABLE_MESSAGE_CONTENT_INTENT=true`, somente se ainda usar comandos legados
   com prefixo

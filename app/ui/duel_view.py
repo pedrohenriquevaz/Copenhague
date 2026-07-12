@@ -73,6 +73,29 @@ def build_duel_result_embed(
         value=format_points(result.challenged_wallet.balance, settings.currency_name),
         inline=True,
     )
+    cashback_lines = []
+    if result.challenger_cashback > 0:
+        challenger_cashback = format_points(
+            result.challenger_cashback,
+            settings.currency_name,
+        )
+        cashback_lines.append(
+            f"Desafiante: {challenger_cashback}"
+        )
+    if result.challenged_cashback > 0:
+        challenged_cashback = format_points(
+            result.challenged_cashback,
+            settings.currency_name,
+        )
+        cashback_lines.append(
+            f"Desafiado: {challenged_cashback}"
+        )
+    if cashback_lines:
+        embed.add_field(
+            name="Cashback de proteção",
+            value="\n".join(cashback_lines),
+            inline=False,
+        )
     return embed
 
 

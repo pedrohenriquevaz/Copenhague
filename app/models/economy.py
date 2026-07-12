@@ -22,6 +22,9 @@ class EconomyTransactionType(StrEnum):
     SYSTEM_ADJUSTMENT = "SYSTEM_ADJUSTMENT"
     USER_TRANSFER = "USER_TRANSFER"
     LEVEL_UPGRADE = "LEVEL_UPGRADE"
+    CREDIT_CASHBACK = "CREDIT_CASHBACK"
+    SAVINGS_DEPOSIT = "SAVINGS_DEPOSIT"
+    SAVINGS_WITHDRAW = "SAVINGS_WITHDRAW"
 
 
 @dataclass(slots=True)
@@ -72,6 +75,73 @@ class BalanceMutationResult:
 
     wallet: UserWallet
     transaction: EconomyTransaction
+
+
+@dataclass(slots=True)
+class CreditProtectionState:
+    """Estado de saves e derrotas seguidas de um usuario."""
+
+    guild_id: int
+    user_id: int
+    saves: int
+    lose_streak: int
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class CreditProtectionResult:
+    """Resultado da avaliacao de protecao apos um jogo."""
+
+    state: CreditProtectionState
+    wallet: UserWallet | None = None
+    transaction: EconomyTransaction | None = None
+    cashback_amount: int = 0
+    cashback_percent: int = 0
+    save_consumed: bool = False
+    triggered_streak: int = 0
+
+
+@dataclass(slots=True)
+class CreditProtectionAdjustmentResult:
+    """Resultado de um ajuste administrativo de saves."""
+
+    before: CreditProtectionState
+    after: CreditProtectionState
+    delta: int
+
+
+@dataclass(slots=True)
+class SavingsAccount:
+    """Saldo separado de poupanca de um usuario."""
+
+    guild_id: int
+    user_id: int
+    balance: int
+    total_interest_earned: int
+    last_interest_at: datetime
+    locked_until: datetime | None
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class SavingsOverview:
+    """Visao de carteira e poupanca do usuario."""
+
+    wallet: UserWallet
+    account: SavingsAccount
+    daily_interest_bps: int
+    max_deposit: int
+    interest_applied: int = 0
+
+
+@dataclass(slots=True)
+class SavingsOperationResult:
+    """Resultado de deposito ou saque da poupanca."""
+
+    overview: SavingsOverview
+    transaction: EconomyTransaction
+    amount: int
+    interest_applied: int = 0
 
 
 @dataclass(slots=True)
@@ -141,3 +211,5 @@ class UserProfileResetResult:
     deleted_purchases: int
     deleted_wallets: int
     deleted_level_upgrades: int = 0
+    deleted_credit_protection: int = 0
+    deleted_savings_accounts: int = 0

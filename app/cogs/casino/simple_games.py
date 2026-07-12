@@ -400,8 +400,9 @@ def build_casino_result_embed(
     result: CasinoGameResult,
     settings: GuildEconomySettings,
 ) -> discord.Embed:
-    color = discord.Color.green() if result.payout > result.bet else discord.Color.red()
-    if result.payout == result.bet:
+    total_return = result.payout + result.cashback
+    color = discord.Color.green() if total_return > result.bet else discord.Color.red()
+    if total_return == result.bet:
         color = discord.Color.blurple()
 
     embed = discord.Embed(title=result.title, color=color)
@@ -420,6 +421,12 @@ def build_casino_result_embed(
         value=format_points(result.payout, settings.currency_name),
         inline=True,
     )
+    if result.cashback > 0:
+        embed.add_field(
+            name="Cashback de proteção",
+            value=format_points(result.cashback, settings.currency_name),
+            inline=True,
+        )
     embed.add_field(
         name="Lucro",
         value=_format_profit(result.profit, settings),
@@ -511,10 +518,15 @@ def build_casino_ranking_embed(
 
 def _format_result_message(result: CasinoGameResult) -> str:
     if result.payout > result.bet:
-        return f"Voce venceu! Resultado: **{result.result_label}**"
+        return f"Você venceu! Resultado: **{result.result_label}**"
+    if result.cashback > 0:
+        return (
+            "Você perdeu, mas um save de proteção recuperou parte da aposta: "
+            f"**{result.result_label}**"
+        )
     if result.payout > 0:
         return f"Quase. Resultado: **{result.result_label}**"
-    return f"Voce perdeu. Resultado: **{result.result_label}**"
+    return f"Você perdeu. Resultado: **{result.result_label}**"
 
 
 def _format_profit(

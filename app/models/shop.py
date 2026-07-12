@@ -76,6 +76,7 @@ class RewardItemCreate:
     role_id: int | None
     delivery_message: str | None
     created_by: int
+    duration_days: int | None = None
 
 
 @dataclass(slots=True)
@@ -98,6 +99,7 @@ class RewardItem:
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
+    duration_days: int | None = None
 
 
 @dataclass(slots=True)
@@ -141,6 +143,7 @@ class LevelConfig:
     created_by: int
     created_at: datetime
     updated_at: datetime
+    saves_reward: int = 0
 
 
 @dataclass(slots=True)

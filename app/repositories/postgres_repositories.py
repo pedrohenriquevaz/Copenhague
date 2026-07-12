@@ -12,6 +12,8 @@ from app.repositories.postgres_database import (
     PostgresConnectionAdapter,
     PostgresDatabase,
 )
+from app.repositories.truco_repository import SQLiteTrucoRepository
+from app.repositories.uno_repository import SQLiteUnoRepository
 
 
 class _PostgresRepositoryMixin:
@@ -64,6 +66,20 @@ class PostgresFormRepository(_PostgresRepositoryMixin, SQLiteFormRepository):
 
 class PostgresGiveawayRepository(_PostgresRepositoryMixin, SQLiteGiveawayRepository):
     """PostgreSQL storage for giveaways."""
+
+    def __init__(self, database: PostgresDatabase) -> None:
+        self._init_postgres(database)
+
+
+class PostgresTrucoRepository(_PostgresRepositoryMixin, SQLiteTrucoRepository):
+    """PostgreSQL storage for Truco games."""
+
+    def __init__(self, database: PostgresDatabase) -> None:
+        self._init_postgres(database)
+
+
+class PostgresUnoRepository(_PostgresRepositoryMixin, SQLiteUnoRepository):
+    """PostgreSQL storage for UNO games."""
 
     def __init__(self, database: PostgresDatabase) -> None:
         self._init_postgres(database)

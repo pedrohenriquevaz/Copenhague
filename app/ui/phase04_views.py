@@ -75,6 +75,12 @@ def build_scratch_card_embed(
         value=format_points(result.payout, settings.currency_name),
         inline=True,
     )
+    if result.cashback > 0:
+        embed.add_field(
+            name="Cashback de proteção",
+            value=format_points(result.cashback, settings.currency_name),
+            inline=True,
+        )
     embed.add_field(
         name="Lucro",
         value=_format_profit(result.profit, settings),
@@ -192,6 +198,12 @@ def build_collective_race_result_embed(
         value=format_points(result.total_refunded, settings.currency_name),
         inline=True,
     )
+    if result.total_cashback > 0:
+        embed.add_field(
+            name="Cashback de proteção",
+            value=format_points(result.total_cashback, settings.currency_name),
+            inline=True,
+        )
     return embed
 
 

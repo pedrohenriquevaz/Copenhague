@@ -12,7 +12,7 @@ administracao.
 ### Base e operacao
 
 - Carregamento automatico de cogs em `app/cogs`.
-- Sincronizacao de Slash Commands por `GUILD_ID` ou global.
+- Sincronizacao global de Slash Commands ou homologacao por `GUILD_IDS`.
 - Views persistentes para paineis, loja, giveaways, formularios, bets e eventos.
 - Logs estruturados de inicializacao, cogs e sincronizacao.
 - Prefixo legado `cp!` apenas para comandos operacionais antigos.
@@ -91,6 +91,10 @@ Comandos:
 - `/duelo`
 - `/corrida`
 - `/blackjack`
+- `/truco`
+- `/truco_maquina`
+- `/uno`
+- `/uno_maquina`
 - `/jogos_perfil`
 - `/jogos_ranking`
 - `/jogos_historico`
@@ -104,6 +108,10 @@ Recursos:
 - Animacoes visuais em jogos instantaneos.
 - Duelo entre jogadores com botoes.
 - Blackjack com Pedir Carta, Parar e Dobrar.
+- Truco Paulista em duplas com mesa visual persistente.
+- UNO multiplayer com lobby, mãos privadas e mesa pública dinâmica.
+- Modos contra a máquina com pagamento de 2x em caso de vitória.
+- Partidas PvP pagam o pote com bônus de 25% da casa.
 - Notificacao publica de vitorias nos jogos.
 - Notificacao publica de derrotas expressivas acima de 500 pontos.
 - Winstreak no BlackJack: vitorias seguidas aumentam o lucro pago, com teto de
@@ -199,7 +207,7 @@ Crie `.env` a partir de `.env.example`:
 
 ```env
 DISCORD_TOKEN=seu-token
-GUILD_ID=id-do-servidor-de-testes
+GUILD_IDS=id-servidor-teste-1,id-servidor-teste-2
 ENVIRONMENT=development
 LOG_LEVEL=INFO
 GIVEAWAY_DB_PATH=data/giveaways.sqlite3
@@ -254,7 +262,8 @@ Veja o guia completo em `docs/containerizacao.md`.
 2. Confirmar que `data/` esta persistido em volume.
 3. Convidar o bot com escopos `bot` e `applications.commands`.
 4. Habilitar intents necessarios no Developer Portal.
-5. Definir `GUILD_ID` em homologacao para sincronizacao rapida.
+5. Em homologacao, definir `GUILD_IDS` para sincronizacao rapida. Em producao,
+   deixar vazio para os comandos funcionarem em qualquer servidor.
 6. Rodar o bot e confirmar todos os cogs nos logs.
 7. Testar `/admin_panel`, `/admin_analytics` e `/economy_status`.
 8. Publicar `/anuncio_bot`, `/economy_panel_setup` e `/embed_loja`.

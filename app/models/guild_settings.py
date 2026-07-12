@@ -37,4 +37,6 @@ class GuildEconomySettings:
     casino_min_bet_scratch_card: int = 1
     casino_min_bet_collective_race: int = 1
     casino_min_bet_match_bet: int = 1
+    casino_min_bet_truco: int = 1
     casino_limiters_enabled: bool = True
+    savings_daily_interest_bps: int = 0

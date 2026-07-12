@@ -314,7 +314,8 @@ class MatchBetCog(commands.Cog):
             f"Tickets perdedores: **{result.lost_tickets}**\n"
             f"Tickets devolvidos: **{result.refunded_tickets}**\n"
             f"Total pago: **{result.total_paid} pontos**\n"
-            f"Total devolvido: **{result.total_refunded} pontos**"
+            f"Total devolvido: **{result.total_refunded} pontos**\n"
+            f"Cashback de proteção: **{result.total_cashback} pontos**"
         )
 
     def _format_public_settlement(
@@ -333,7 +334,8 @@ class MatchBetCog(commands.Cog):
             f"Bet **#{match.id} - {match.title}** encerrada.\n"
             f"Resultado: **{winner}**\n"
             f"Pagamentos: {format_points(result.total_paid)} | "
-            f"Devolvidos: {format_points(result.total_refunded)}"
+            f"Devolvidos: {format_points(result.total_refunded)} | "
+            f"Cashback: {format_points(result.total_cashback)}"
         )
 
     async def cog_app_command_error(

@@ -10,7 +10,7 @@ from app.services.blackjack_service import BlackjackService, BlackjackValidation
 from app.ui.blackjack_view import (
     BlackjackView,
     announce_blackjack_result,
-    build_blackjack_embed,
+    build_blackjack_message_kwargs,
 )
 from app.ui.casino_animation import (
     blackjack_animation,
@@ -61,9 +61,13 @@ class BlackjackCog(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
             return
 
-        view = None
-        if not session.is_finished:
-            view = BlackjackView(self.bot, session, settings)
+        view = BlackjackView(
+            self.bot,
+            session,
+            settings,
+            player_display_name=interaction.user.display_name,
+            player_avatar_url=interaction.user.display_avatar.url,
+        )
 
         animation = blackjack_animation("deal")
         message = await interaction.followup.send(
@@ -72,14 +76,16 @@ class BlackjackCog(commands.Cog):
             wait=True,
         )
         await play_casino_animation(message, animation)
-        edit_kwargs = {"embed": build_blackjack_embed(session, settings)}
-        if view is not None:
-            edit_kwargs["view"] = view
+        edit_kwargs = build_blackjack_message_kwargs(
+            session,
+            settings,
+            player_display_name=interaction.user.display_name,
+            player_avatar_url=interaction.user.display_avatar.url,
+        )
 
-        await message.edit(**edit_kwargs)
-        if view is not None:
-            view.message = message
-        elif session.is_finished:
+        await message.edit(**edit_kwargs, view=view)
+        view.message = message
+        if session.is_finished:
             await announce_blackjack_result(interaction, session, settings)
 
 

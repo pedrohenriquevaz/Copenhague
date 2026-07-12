@@ -27,8 +27,28 @@ def _format_stock(reward: RewardItem) -> str:
     if reward.stock_quantity == 0:
         return "Esgotado"
     if reward.stock_quantity is None:
-        return "Estoque: ilimitado"
-    return f"Estoque: {reward.stock_quantity}"
+        return "Ilimitado"
+    return f"{reward.stock_quantity} un."
+
+
+def _format_duration(reward: RewardItem) -> str:
+    if reward.duration_days is None:
+        return "Permanente"
+    if reward.duration_days == 1:
+        return "1 dia"
+    return f"{reward.duration_days} dias"
+
+
+def _reward_icon(reward: RewardItem) -> str:
+    icons = {
+        "ROLE": "🎭",
+        "CUSTOM_TEXT": "📝",
+        "MANUAL_REWARD": "🎁",
+        "DIGITAL_CODE": "🔑",
+        "VIP_ACCESS": "💎",
+        "EVENT_ENTRY": "🎟️",
+    }
+    return icons.get(reward.type.value, "🛒")
 
 
 def _build_reward_options(
@@ -41,8 +61,9 @@ def _build_reward_options(
             value=str(reward.id),
             description=(
                 f"{format_points(reward.price, settings.currency_name)} | "
-                f"{_format_stock(reward)}"
+                f"{_format_stock(reward)} | {_format_duration(reward)}"
             )[:100],
+            emoji=_reward_icon(reward),
         )
         for reward in rewards[:25]
     ]
@@ -128,8 +149,9 @@ async def _send_purchase_confirmation(
         inline=True,
     )
     embed.add_field(name="Estoque", value=stock, inline=True)
+    embed.add_field(name="Duração", value=_format_duration(reward), inline=True)
     embed.add_field(
-        name="Saldo apos compra",
+        name="Saldo após compra",
         value=format_points(wallet.balance - reward.price, settings.currency_name),
         inline=False,
     )
@@ -207,13 +229,19 @@ async def send_level_upgrade_confirmation(
         value=format_points(next_level.price, settings.currency_name),
         inline=True,
     )
+    if next_level.saves_reward > 0:
+        embed.add_field(
+            name="Saves/proteções",
+            value=str(next_level.saves_reward),
+            inline=True,
+        )
     embed.add_field(
         name="Seu saldo",
         value=format_points(wallet.balance, settings.currency_name),
         inline=True,
     )
     embed.add_field(
-        name="Saldo apos compra",
+        name="Saldo após compra",
         value=format_points(wallet.balance - next_level.price, settings.currency_name),
         inline=False,
     )
@@ -828,6 +856,15 @@ class ConfirmLevelUpgradeView(discord.ui.View):
                 value=format_points(result.balance_after, settings.currency_name),
                 inline=True,
             )
+            if result.level_config.saves_reward > 0:
+                embed.add_field(
+                    name="Saves recebidos",
+                    value=(
+                        f"{result.level_config.saves_reward} save(s) de proteção "
+                        "foram adicionados ao seu perfil."
+                    ),
+                    inline=False,
+                )
             if role_error is not None:
                 embed.add_field(
                     name="Atenção",

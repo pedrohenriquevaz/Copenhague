@@ -11,7 +11,7 @@ def test_settings_from_env_uses_required_and_default_values() -> None:
     settings = Settings.from_env({"DISCORD_TOKEN": "token"})
 
     assert settings.DISCORD_TOKEN == "token"
-    assert settings.GUILD_ID is None
+    assert settings.GUILD_IDS == ()
     assert settings.ENVIRONMENT == "development"
     assert settings.LOG_LEVEL == "INFO"
     assert settings.DATABASE_BACKEND == "sqlite"
@@ -32,7 +32,7 @@ def test_settings_from_env_parses_optional_values() -> None:
     settings = Settings.from_env(
         {
             "DISCORD_TOKEN": "token",
-            "GUILD_ID": "123",
+            "GUILD_IDS": "123, 456,123",
             "ENVIRONMENT": "production",
             "LOG_LEVEL": "debug",
             "DATABASE_BACKEND": "postgres",
@@ -51,7 +51,7 @@ def test_settings_from_env_parses_optional_values() -> None:
         }
     )
 
-    assert settings.GUILD_ID == 123
+    assert settings.GUILD_IDS == (123, 456)
     assert settings.ENVIRONMENT == "production"
     assert settings.LOG_LEVEL == "DEBUG"
     assert settings.DATABASE_BACKEND == "postgres"
@@ -72,3 +72,9 @@ def test_settings_from_env_parses_optional_values() -> None:
 def test_settings_from_env_requires_token() -> None:
     with pytest.raises(ValueError, match="DISCORD_TOKEN"):
         Settings.from_env({})
+
+
+def test_settings_from_env_accepts_legacy_guild_id() -> None:
+    settings = Settings.from_env({"DISCORD_TOKEN": "token", "GUILD_ID": "123"})
+
+    assert settings.GUILD_IDS == (123,)

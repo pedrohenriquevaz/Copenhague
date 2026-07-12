@@ -79,6 +79,10 @@ def build_user_commands_embed() -> discord.Embed:
         name="Jogos",
         value=(
             "`/blackjack` joga BlackJack apostando pontos.\n"
+            "`/truco` cria uma partida de Truco Paulista em duplas.\n"
+            "`/truco_maquina` joga Truco individual contra a máquina.\n"
+            "`/uno` cria uma mesa multiplayer de UNO.\n"
+            "`/uno_maquina` joga UNO contra a máquina.\n"
             "`/cara_coroa`, `/dado`, `/slot` e `/roleta` são jogos rápidos.\n"
             "`/duelo` desafia outro membro em uma aposta.\n"
             "`/corrida` aposta em uma corrida individual de mascotes.\n"

@@ -14,7 +14,7 @@ load_dotenv()
 @dataclass(slots=True)
 class Settings:
     DISCORD_TOKEN: str
-    GUILD_ID: int | None
+    GUILD_IDS: tuple[int, ...]
     ENVIRONMENT: str
     LOG_LEVEL: str
     DATABASE_BACKEND: str
@@ -40,12 +40,11 @@ class Settings:
         if not token:
             raise ValueError("A variavel de ambiente DISCORD_TOKEN nao foi definida.")
 
-        guild_id_raw = env.get("GUILD_ID")
-        guild_id = int(guild_id_raw) if guild_id_raw else None
+        guild_ids = _get_guild_ids(env)
 
         return cls(
             DISCORD_TOKEN=token,
-            GUILD_ID=guild_id,
+            GUILD_IDS=guild_ids,
             ENVIRONMENT=env.get("ENVIRONMENT", "development"),
             LOG_LEVEL=env.get("LOG_LEVEL", "INFO").upper(),
             DATABASE_BACKEND=env.get("DATABASE_BACKEND", "sqlite").strip().lower(),
@@ -116,3 +115,18 @@ def _get_bool(
         return default
 
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _get_guild_ids(environ: Mapping[str, str]) -> tuple[int, ...]:
+    """Retorna servidores usados somente para sincronizacao rapida de comandos."""
+    raw = environ.get("GUILD_IDS", "").strip()
+    if not raw:
+        # Compatibilidade com instalacoes que ainda usam a variavel singular.
+        raw = environ.get("GUILD_ID", "").strip()
+    if not raw:
+        return ()
+
+    guild_ids = tuple(dict.fromkeys(int(value.strip()) for value in raw.split(",")))
+    if any(guild_id <= 0 for guild_id in guild_ids):
+        raise ValueError("GUILD_IDS deve conter apenas IDs positivos separados por virgula.")
+    return guild_ids

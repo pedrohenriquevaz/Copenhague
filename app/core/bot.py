@@ -22,7 +22,11 @@ from app.repositories.postgres_repositories import (
     PostgresGameProgressRepository,
     PostgresGiveawayRepository,
     PostgresMatchBetRepository,
+    PostgresTrucoRepository,
+    PostgresUnoRepository,
 )
+from app.repositories.truco_repository import SQLiteTrucoRepository
+from app.repositories.uno_repository import SQLiteUnoRepository
 from app.services.activity_service import ActivityService
 from app.services.blackjack_service import BlackjackService
 from app.services.bolao_service import BolaoService
@@ -35,6 +39,8 @@ from app.services.giveaway_service import GiveawayService
 from app.services.match_bet_service import MatchBetService
 from app.services.scratch_card_service import ScratchCardService
 from app.services.shop_service import ShopService
+from app.services.truco_service import TrucoService
+from app.services.uno_service import UnoService
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +63,15 @@ class DiscordBot(commands.Bot):
         )
         self.match_bet_service = MatchBetService(
             self.match_bet_repository,
+            self.economy_repository,
+        )
+        self.truco_service = TrucoService(
+            self.truco_repository,
+            self.economy_repository,
+            progress_service=self.game_progress_service,
+        )
+        self.uno_service = UnoService(
+            self.uno_repository,
             self.economy_repository,
         )
         self.activity_service = ActivityService(self.economy_repository)
@@ -103,6 +118,8 @@ class DiscordBot(commands.Bot):
             self.match_bet_repository = PostgresMatchBetRepository(
                 self.postgres_database
             )
+            self.truco_repository = PostgresTrucoRepository(self.postgres_database)
+            self.uno_repository = PostgresUnoRepository(self.postgres_database)
             self.game_progress_repository = PostgresGameProgressRepository(
                 self.postgres_database
             )
@@ -112,7 +129,8 @@ class DiscordBot(commands.Bot):
             )
             logger.info(
                 "Runtime de persistencia: PostgreSQL "
-                "(economia, progressao, bets, bolao, formularios e sorteios)."
+                "(economia, progressao, bets, bolao, Truco, UNO, "
+                "formularios e sorteios)."
             )
             return
 
@@ -122,6 +140,8 @@ class DiscordBot(commands.Bot):
         self.giveaway_repository = SQLiteGiveawayRepository(settings.GIVEAWAY_DB_PATH)
         self.bolao_repository = SQLiteBolaoRepository(settings.BOLAO_DB_PATH)
         self.match_bet_repository = SQLiteMatchBetRepository(settings.MATCH_BET_DB_PATH)
+        self.truco_repository = SQLiteTrucoRepository(settings.ECONOMY_DB_PATH)
+        self.uno_repository = SQLiteUnoRepository(settings.ECONOMY_DB_PATH)
         self.game_progress_repository = self._build_game_progress_repository(settings)
         self.form_repository = SQLiteFormRepository(settings.FORM_DB_PATH)
         self.economy_repository = SQLiteEconomyRepository(settings.ECONOMY_DB_PATH)
@@ -196,21 +216,24 @@ class DiscordBot(commands.Bot):
     async def sync_commands(self) -> None:
         """
         Sincroniza os Slash Commands.
-        Em desenvolvimento: sincroniza no servidor de testes para ser mais rapido.
-        Em producao: sincroniza globalmente.
+        Sem GUILD_IDS, sincroniza globalmente para funcionar em qualquer servidor.
+        GUILD_IDS e destinado apenas a sincronizacao rapida em homologacao.
         """
         settings = get_settings()
 
         try:
-            if settings.GUILD_ID:
-                guild = discord.Object(id=settings.GUILD_ID)
-                self.tree.copy_global_to(guild=guild)
-                synced = await self.tree.sync(guild=guild)
+            if settings.GUILD_IDS:
+                total = 0
+                for guild_id in settings.GUILD_IDS:
+                    guild = discord.Object(id=guild_id)
+                    self.tree.copy_global_to(guild=guild)
+                    synced = await self.tree.sync(guild=guild)
+                    total += len(synced)
                 logger.info(
-                    "Slash Commands sincronizados no servidor de testes (%s): "
-                    "%s comando(s).",
-                    settings.GUILD_ID,
-                    len(synced),
+                    "Slash Commands sincronizados em %s servidor(es) de testes: "
+                    "%s registro(s).",
+                    len(settings.GUILD_IDS),
+                    total,
                 )
             else:
                 synced = await self.tree.sync()
@@ -220,10 +243,10 @@ class DiscordBot(commands.Bot):
                 )
         except discord.Forbidden as exc:
             logger.error(
-                "Nao foi possivel sincronizar Slash Commands no servidor %s: %s. "
-                "Verifique se GUILD_ID aponta para um servidor onde o bot esta "
+                "Nao foi possivel sincronizar Slash Commands nos servidores %s: %s. "
+                "Verifique se GUILD_IDS aponta para servidores onde o bot esta "
                 "presente e se ele foi convidado com o escopo applications.commands.",
-                settings.GUILD_ID,
+                settings.GUILD_IDS,
                 exc,
             )
         except Exception as exc:

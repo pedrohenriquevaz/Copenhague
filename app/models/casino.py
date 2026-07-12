@@ -16,6 +16,7 @@ class CasinoGameType(StrEnum):
     DUEL = "duel"
     MASCOT_RACE = "mascot_race"
     BLACKJACK = "blackjack"
+    TRUCO = "truco"
 
 
 class CasinoOutcome(StrEnum):
@@ -93,6 +94,7 @@ class CasinoGameResult:
     result_label: str
     detail_lines: list[str]
     wallet: UserWallet
+    cashback: int = 0
 
 
 @dataclass(slots=True)
@@ -111,6 +113,8 @@ class DuelResult:
     detail_lines: list[str]
     challenger_wallet: UserWallet
     challenged_wallet: UserWallet
+    challenger_cashback: int = 0
+    challenged_cashback: int = 0
 
 
 @dataclass(slots=True)
@@ -227,6 +231,7 @@ class BlackjackSession:
     payout: int = 0
     base_payout: int = 0
     streak_bonus: int = 0
+    cashback: int = 0
     win_streak: int = 0
     payout_multiplier_percent: int = 100
     can_double: bool = True

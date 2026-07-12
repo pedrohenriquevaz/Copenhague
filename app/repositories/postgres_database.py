@@ -42,6 +42,10 @@ _SERIAL_ID_TABLES = {
     "native_voice_sessions",
     "reward_items",
     "reward_purchases",
+    "truco_actions",
+    "truco_games",
+    "uno_actions",
+    "uno_games",
     "user_level_upgrades",
 }
 
@@ -407,10 +411,14 @@ def _add_row_lock_if_needed(query: str) -> str:
         return query
     lock_tables = (
         "FROM USER_WALLETS",
+        "FROM USER_CREDIT_PROTECTION",
+        "FROM USER_SAVINGS_ACCOUNTS",
         "FROM REWARD_ITEMS",
         "FROM GIVEAWAY_USER_TICKETS",
         "FROM MATCH_BET_MATCHES",
         "FROM COLLECTIVE_RACES",
+        "FROM TRUCO_GAMES",
+        "FROM UNO_GAMES",
         "FROM SHOP_LEVEL_CONFIGS",
         "FROM USER_LEVEL_UPGRADES",
     )

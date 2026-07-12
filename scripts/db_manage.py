@@ -43,6 +43,8 @@ class TableSpec:
 TABLE_MANIFEST: tuple[TableSpec, ...] = (
     TableSpec("guild_settings", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
     TableSpec("user_wallets", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
+    TableSpec("user_savings_accounts", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
+    TableSpec("user_credit_protection", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
     TableSpec("activity_claim_cursors", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
     TableSpec("economy_reward_claims", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
     TableSpec("economy_transactions", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
@@ -53,6 +55,10 @@ TABLE_MANIFEST: tuple[TableSpec, ...] = (
     TableSpec("reward_items", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
     TableSpec("reward_purchases", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
     TableSpec("reward_codes", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
+    TableSpec("truco_games", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
+    TableSpec("truco_actions", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
+    TableSpec("uno_games", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
+    TableSpec("uno_actions", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
     TableSpec("admin_audit_logs", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
     TableSpec("game_achievements", "GAME_PROGRESS_DB_PATH", "data/bot.db", True),
     TableSpec("user_game_achievements", "GAME_PROGRESS_DB_PATH", "data/bot.db"),
@@ -333,6 +339,8 @@ def refresh_sqlite_schemas() -> None:
     from app.repositories.game_progress_repository import SQLiteGameProgressRepository
     from app.repositories.giveaway_repository import SQLiteGiveawayRepository
     from app.repositories.match_bet_repository import SQLiteMatchBetRepository
+    from app.repositories.truco_repository import SQLiteTrucoRepository
+    from app.repositories.uno_repository import SQLiteUnoRepository
 
     factories = (
         (
@@ -341,6 +349,14 @@ def refresh_sqlite_schemas() -> None:
         ),
         (Path(os.getenv("BOLAO_DB_PATH", "data/bot.db")), SQLiteBolaoRepository),
         (Path(os.getenv("MATCH_BET_DB_PATH", "data/bot.db")), SQLiteMatchBetRepository),
+        (
+            Path(os.getenv("ECONOMY_DB_PATH", "data/economy.sqlite3")),
+            SQLiteTrucoRepository,
+        ),
+        (
+            Path(os.getenv("ECONOMY_DB_PATH", "data/economy.sqlite3")),
+            SQLiteUnoRepository,
+        ),
         (
             Path(os.getenv("GAME_PROGRESS_DB_PATH", "data/bot.db")),
             SQLiteGameProgressRepository,
@@ -516,6 +532,8 @@ def find_missing_tables(connection: Any) -> list[str]:
 EXPECTED_INDEXES = (
     "idx_economy_transactions_guild_user_created",
     "idx_economy_reward_claims_user",
+    "idx_user_credit_protection_guild",
+    "idx_user_savings_accounts_guild",
     "idx_native_voice_sessions_guild_user",
     "idx_native_voice_sessions_open",
     "idx_native_message_stats_guild_user",
@@ -524,6 +542,13 @@ EXPECTED_INDEXES = (
     "idx_user_level_upgrades_user",
     "idx_reward_purchases_guild_user_created",
     "idx_reward_purchases_reward_user",
+    "idx_truco_games_guild_status",
+    "idx_truco_games_message",
+    "idx_truco_actions_game",
+    "idx_uno_games_guild_status",
+    "idx_uno_games_channel",
+    "idx_uno_games_message",
+    "idx_uno_actions_game",
     "idx_collective_races_open",
     "idx_collective_race_bets_race",
     "idx_match_bet_matches_active",

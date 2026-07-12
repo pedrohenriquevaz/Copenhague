@@ -56,8 +56,15 @@ class AdminPanelCog(commands.Cog):
         )
 
         wallets = economy_summary["wallets"]
+        savings = economy_summary.get("savings", {})
         shop = economy_summary["shop"]
-        circulating = format_points(wallets["balance"], settings.currency_name)
+        wallet_balance = int(wallets["balance"])
+        savings_balance = int(savings.get("balance", 0))
+        circulating = format_points(
+            wallet_balance + savings_balance,
+            settings.currency_name,
+        )
+        savings_formatted = format_points(savings_balance, settings.currency_name)
         admin_limit = format_points(
             settings.max_admin_grant_per_use,
             settings.currency_name,
@@ -89,6 +96,7 @@ class AdminPanelCog(commands.Cog):
             value=(
                 f"Moeda: **{settings.currency_name}**\n"
                 f"Carteiras: **{wallets['count']}**\n"
+                f"Poupança: **{savings_formatted}**\n"
                 f"Saldo circulante: **{circulating}**"
             ),
             inline=True,
@@ -268,11 +276,17 @@ def _format_points_flow(summary: dict, currency_name: str) -> str:
     )
     removed = _tx_out(transactions, EconomyTransactionType.ADMIN_REMOVE)
     spent = summary["wallets"]["spent"]
-    balance = summary["wallets"]["balance"]
+    savings = summary.get("savings", {})
+    savings_balance = int(savings.get("balance", 0))
+    savings_interest = int(savings.get("interest_earned", 0))
+    emitted += savings_interest
+    balance = summary["wallets"]["balance"] + savings_balance
     return (
         f"Emitidos: **{format_points(emitted, currency_name)}**\n"
         f"Removidos por admin: **{format_points(removed, currency_name)}**\n"
         f"Gastos totais: **{format_points(spent, currency_name)}**\n"
+        f"Em poupança: **{format_points(savings_balance, currency_name)}**\n"
+        f"Juros da poupança: **{format_points(savings_interest, currency_name)}**\n"
         f"Circulando: **{format_points(balance, currency_name)}**"
     )
 

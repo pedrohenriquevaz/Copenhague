@@ -108,8 +108,11 @@ async def test_postgres_shop_limited_stock_is_single_claim(
             role_id=None,
             delivery_message=None,
             created_by=99,
+            duration_days=14,
         )
     )
+
+    assert reward.duration_days == 14
 
     results = await asyncio.gather(
         repository.purchase_reward(guild_id=1, user_id=10, reward_id=reward.id),

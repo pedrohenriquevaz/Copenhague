@@ -24,7 +24,11 @@ from .postgres_repositories import (
     PostgresFormRepository,
     PostgresGiveawayRepository,
     PostgresMatchBetRepository,
+    PostgresTrucoRepository,
+    PostgresUnoRepository,
 )
+from .truco_repository import SQLiteTrucoRepository, TrucoRepositoryProtocol
+from .uno_repository import SQLiteUnoRepository, UnoRepositoryProtocol
 
 __all__ = [
     "BolaoRepositoryProtocol",
@@ -36,10 +40,16 @@ __all__ = [
     "SQLiteGameProgressRepository",
     "SQLiteGiveawayRepository",
     "SQLiteMatchBetRepository",
+    "SQLiteTrucoRepository",
+    "TrucoRepositoryProtocol",
+    "SQLiteUnoRepository",
+    "UnoRepositoryProtocol",
     "PostgresBolaoRepository",
     "PostgresEconomyRepository",
     "PostgresFormRepository",
     "PostgresGameProgressRepository",
     "PostgresGiveawayRepository",
     "PostgresMatchBetRepository",
+    "PostgresTrucoRepository",
+    "PostgresUnoRepository",
 ]

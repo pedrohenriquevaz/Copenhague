@@ -42,6 +42,7 @@ class ShopService:
         role_id: int | None,
         delivery_message: str | None,
         created_by: int,
+        duration_days: int | None = None,
     ) -> RewardItem:
         name = self._require_text(name, "O nome da recompensa nao pode ficar vazio.")
         description = self._require_text(
@@ -58,6 +59,7 @@ class ShopService:
             raise ShopValidationError("O limite por usuario precisa ser positivo.")
         if reward_type is RewardType.ROLE and role_id is None:
             raise ShopValidationError("Recompensas de cargo precisam de um cargo.")
+        duration_days = self._normalize_duration_days(duration_days)
 
         reward = await self._repository.create_reward(
             RewardItemCreate(
@@ -72,6 +74,7 @@ class ShopService:
                 role_id=role_id,
                 delivery_message=delivery_message[:1000] if delivery_message else None,
                 created_by=created_by,
+                duration_days=duration_days,
             )
         )
         await self._repository.record_audit_log(
@@ -83,6 +86,7 @@ class ShopService:
                 "name": reward.name,
                 "price": reward.price,
                 "type": reward.type.value,
+                "duration_days": reward.duration_days,
             },
             reason="reward_create",
         )
@@ -118,6 +122,7 @@ class ShopService:
         role_id: int | None = None,
         delivery_message: str | None = None,
         is_active: bool | None = None,
+        duration_days: int | None = None,
     ) -> RewardItem:
         before = await self._repository.get_reward(reward_id)
         if before is None or before.guild_id != guild_id or before.deleted_at:
@@ -172,6 +177,8 @@ class ShopService:
             updates["delivery_message"] = (
                 normalized_delivery[:1000] if normalized_delivery else None
             )
+        if duration_days is not None:
+            updates["duration_days"] = self._normalize_duration_days(duration_days)
         if is_active is not None:
             updates["is_active"] = int(is_active)
 
@@ -262,6 +269,7 @@ class ShopService:
         price: int,
         is_active: bool,
         actor_id: int,
+        saves_reward: int = 0,
     ) -> LevelConfig:
         if level <= 0:
             raise ShopValidationError("O nível precisa ser maior que zero.")
@@ -270,6 +278,9 @@ class ShopService:
         if role_id <= 0:
             raise ShopValidationError("Informe um cargo válido para o nível.")
 
+        if saves_reward < 0:
+            raise ShopValidationError("A quantidade de saves não pode ser negativa.")
+
         config = await self._repository.upsert_level_config(
             guild_id=guild_id,
             level=level,
@@ -277,6 +288,7 @@ class ShopService:
             price=price,
             is_active=is_active,
             created_by=actor_id,
+            saves_reward=saves_reward,
         )
         await self._repository.record_audit_log(
             guild_id=guild_id,
@@ -369,6 +381,7 @@ class ShopService:
             "max_per_user": reward.max_per_user,
             "role_id": reward.role_id,
             "delivery_message": reward.delivery_message,
+            "duration_days": reward.duration_days,
             "is_active": reward.is_active,
             "deleted_at": reward.deleted_at.isoformat() if reward.deleted_at else None,
         }
@@ -380,5 +393,16 @@ class ShopService:
             "level": level.level,
             "role_id": level.role_id,
             "price": level.price,
+            "saves_reward": level.saves_reward,
             "is_active": level.is_active,
         }
+
+    @staticmethod
+    def _normalize_duration_days(value: int | None) -> int | None:
+        if value is None or value == 0:
+            return None
+        if value < 0:
+            raise ShopValidationError("A duração em dias não pode ser negativa.")
+        if value > 3650:
+            raise ShopValidationError("A duração máxima é de 3650 dias.")
+        return value

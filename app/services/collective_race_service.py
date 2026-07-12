@@ -191,6 +191,7 @@ class CollectiveRaceService:
 
             total_paid = 0
             total_refunded = 0
+            total_cashback = 0
             for bet in bets:
                 if bet.status is CollectiveRaceBetStatus.WON:
                     if bet.payout_transaction_id is not None:
@@ -203,6 +204,14 @@ class CollectiveRaceService:
                                 transaction_id=transaction_id,
                             )
                     total_paid += paid_amount
+                    await self._economy_repository.apply_credit_protection(
+                        guild_id=bet.guild_id,
+                        user_id=bet.user_id,
+                        game_key="collective_race",
+                        stake=bet.stake,
+                        is_loss=False,
+                        metadata={"source": "collective_race", "race_id": bet.race_id},
+                    )
                     await self._progress_service.unlock(
                         bet.guild_id,
                         bet.user_id,
@@ -218,6 +227,20 @@ class CollectiveRaceService:
                         bet.user_id,
                     )
                 elif bet.status is CollectiveRaceBetStatus.LOST:
+                    credit = await self._economy_repository.apply_credit_protection(
+                        guild_id=bet.guild_id,
+                        user_id=bet.user_id,
+                        game_key="collective_race",
+                        stake=bet.stake,
+                        is_loss=True,
+                        metadata={
+                            "source": "collective_race",
+                            "race_id": bet.race_id,
+                            "bet_id": bet.id,
+                            "mascot": bet.mascot.value,
+                        },
+                    )
+                    total_cashback += credit.cashback_amount
                     await self._progress_service.unlock(
                         bet.guild_id,
                         bet.user_id,
@@ -252,6 +275,7 @@ class CollectiveRaceService:
             ),
             total_paid=total_paid,
             total_refunded=total_refunded,
+            total_cashback=total_cashback,
         )
 
     async def _pay_bet(self, bet: CollectiveRaceBet) -> tuple[int | None, int]:

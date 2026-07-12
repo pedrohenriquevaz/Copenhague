@@ -70,10 +70,11 @@ class ScratchCardResult:
     jackpot_won: int
     seasonal_theme: SeasonalTheme
     wallet: UserWallet
+    cashback: int = 0
 
     @property
     def profit(self) -> int:
-        return self.payout - self.cost
+        return self.payout + self.cashback - self.cost
 
 
 @dataclass(slots=True)
@@ -202,3 +203,4 @@ class CollectiveRaceSettlementResult:
     refunded_bets: int
     total_paid: int
     total_refunded: int
+    total_cashback: int = 0

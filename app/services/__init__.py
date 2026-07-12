@@ -32,6 +32,8 @@ from .scratch_card_service import (
     ScratchCardValidationError,
 )
 from .shop_service import ShopService, ShopValidationError
+from .truco_service import TrucoService, TrucoValidationError
+from .uno_service import UnoService, UnoValidationError
 
 __all__ = [
     "ActivityService",
@@ -63,4 +65,8 @@ __all__ = [
     "ScratchCardValidationError",
     "ShopService",
     "ShopValidationError",
+    "TrucoService",
+    "TrucoValidationError",
+    "UnoService",
+    "UnoValidationError",
 ]

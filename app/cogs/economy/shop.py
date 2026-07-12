@@ -63,6 +63,20 @@ class ShopCog(commands.Cog):
     )
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        nome="Nome da recompensa.",
+        descricao="Descrição exibida ao usuário antes da compra.",
+        tipo=(
+            "Tipo da recompensa: ROLE, CUSTOM_TEXT, MANUAL_REWARD, DIGITAL_CODE, "
+            "VIP_ACCESS ou EVENT_ENTRY."
+        ),
+        preco="Preço em pontos.",
+        estoque="Estoque disponível. Deixe vazio para estoque ilimitado.",
+        max_por_usuario="Limite de compras por usuário.",
+        cargo_entregue="Cargo entregue quando o tipo for ROLE.",
+        mensagem_entrega="Mensagem privada exibida após a compra.",
+        duracao_dias="Duração do item em dias. Use 0 ou deixe vazio para permanente.",
+    )
     async def reward_create(
         self,
         interaction: discord.Interaction,
@@ -74,6 +88,7 @@ class ShopCog(commands.Cog):
         max_por_usuario: int | None = 1,
         cargo_entregue: discord.Role | None = None,
         mensagem_entrega: str | None = None,
+        duracao_dias: int | None = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
@@ -113,6 +128,7 @@ class ShopCog(commands.Cog):
                 role_id=cargo_entregue.id if cargo_entregue else None,
                 delivery_message=mensagem_entrega,
                 created_by=interaction.user.id,
+                duration_days=duracao_dias,
             )
         except ShopValidationError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
@@ -125,7 +141,8 @@ class ShopCog(commands.Cog):
             (
                 f"Recompensa criada com sucesso. ID: **{reward.id}**\n"
                 f"Nome: **{reward.name}**\n"
-                f"Preco: **{format_points(reward.price, settings.currency_name)}**"
+                f"Preço: **{format_points(reward.price, settings.currency_name)}**\n"
+                f"Duração: **{_format_reward_duration(reward.duration_days)}**"
             ),
             ephemeral=True,
         )
@@ -147,6 +164,9 @@ class ShopCog(commands.Cog):
         max_por_usuario="Novo limite por usuario. Use 0 para remover o limite.",
         cargo_entregue="Novo cargo entregue quando o tipo for ROLE.",
         mensagem_entrega="Nova mensagem de entrega. Use texto vazio para limpar.",
+        duracao_dias=(
+            "Duração do item em dias. Use 0 para deixar permanente."
+        ),
         ativo="Ativa ou desativa o item na loja.",
     )
     async def reward_update(
@@ -162,6 +182,7 @@ class ShopCog(commands.Cog):
         max_por_usuario: int | None = None,
         cargo_entregue: discord.Role | None = None,
         mensagem_entrega: str | None = None,
+        duracao_dias: int | None = None,
         ativo: bool | None = None,
     ) -> None:
         if interaction.guild is None:
@@ -216,6 +237,7 @@ class ShopCog(commands.Cog):
                 max_per_user=max_por_usuario,
                 role_id=cargo_entregue.id if cargo_entregue else None,
                 delivery_message=mensagem_entrega,
+                duration_days=duracao_dias,
                 is_active=ativo,
             )
         except ShopValidationError as exc:
@@ -233,8 +255,9 @@ class ShopCog(commands.Cog):
                 "Recompensa atualizada com sucesso.\n\n"
                 f"ID: **{reward.id}**\n"
                 f"Nome: **{reward.name}**\n"
-                f"Preco: **{format_points(reward.price, settings.currency_name)}**\n"
+                f"Preço: **{format_points(reward.price, settings.currency_name)}**\n"
                 f"Estoque: **{stock}**\n"
+                f"Duração: **{_format_reward_duration(reward.duration_days)}**\n"
                 f"Ativa: **{'sim' if reward.is_active else 'nao'}**"
             ),
             ephemeral=True,
@@ -330,7 +353,12 @@ class ShopCog(commands.Cog):
             include_inactive=True,
         )
         await interaction.response.send_message(
-            embed=build_shop_embed(rewards, settings, levels=levels),
+            embed=build_shop_embed(
+                rewards,
+                settings,
+                levels=levels,
+                show_reward_ids=True,
+            ),
             ephemeral=True,
         )
 
@@ -344,6 +372,7 @@ class ShopCog(commands.Cog):
         nivel="Número progressivo do nível.",
         cargo="Cargo associado a esse nível.",
         custo="Quantidade de pontos para comprar esse nível.",
+        saves="Quantidade de saves/proteções concedidos ao comprar o nível.",
         ativo="Define se o nível pode ser comprado.",
     )
     async def nivel_configurar(
@@ -352,6 +381,7 @@ class ShopCog(commands.Cog):
         nivel: int,
         cargo: discord.Role,
         custo: int,
+        saves: int = 0,
         ativo: bool = True,
     ) -> None:
         if interaction.guild is None:
@@ -376,6 +406,7 @@ class ShopCog(commands.Cog):
                 price=custo,
                 is_active=ativo,
                 actor_id=interaction.user.id,
+                saves_reward=saves,
             )
         except ShopValidationError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
@@ -390,6 +421,7 @@ class ShopCog(commands.Cog):
                 f"Nível: **{config.level}**\n"
                 f"Cargo: {cargo.mention}\n"
                 f"Custo: **{format_points(config.price, settings.currency_name)}**\n"
+                f"Saves/proteções: **{config.saves_reward}**\n"
                 f"Ativo: **{'sim' if config.is_active else 'nao'}**"
             ),
             ephemeral=True,
@@ -433,7 +465,7 @@ class ShopCog(commands.Cog):
             (
                 f"**Nível {level.level}** | <@&{level.role_id}> | "
                 f"{format_points(level.price, settings.currency_name)} | "
-                f"{'ativo' if level.is_active else 'inativo'}"
+                f"saves: {level.saves_reward}"
             )
             for level in levels
         ]
@@ -520,3 +552,11 @@ async def setup(bot: commands.Bot) -> None:
         PublicConvertActivityButton,
         PublicLevelUpgradeButton,
     )
+
+
+def _format_reward_duration(duration_days: int | None) -> str:
+    if duration_days is None:
+        return "Permanente"
+    if duration_days == 1:
+        return "1 dia"
+    return f"{duration_days} dias"

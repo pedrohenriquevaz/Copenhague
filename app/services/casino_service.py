@@ -338,6 +338,22 @@ class CasinoService:
                     bet,
                     CasinoOutcome.DRAW,
                 )
+                challenger_credit = await self._repository.apply_credit_protection(
+                    guild_id=guild_id,
+                    user_id=challenger_id,
+                    game_key=CasinoGameType.DUEL.value,
+                    stake=bet,
+                    is_loss=False,
+                    metadata={"source": "duel", "opponent_id": challenged_id},
+                )
+                challenged_credit = await self._repository.apply_credit_protection(
+                    guild_id=guild_id,
+                    user_id=challenged_id,
+                    game_key=CasinoGameType.DUEL.value,
+                    stake=bet,
+                    is_loss=False,
+                    metadata={"source": "duel", "opponent_id": challenger_id},
+                )
             else:
                 payout = bet * 2
                 winner_wallet, payout = await self._pay_out(
@@ -348,6 +364,25 @@ class CasinoService:
                     payout,
                     CasinoOutcome.WON,
                 )
+                loser_id = (
+                    challenged_id if winner_id == challenger_id else challenger_id
+                )
+                winner_credit = await self._repository.apply_credit_protection(
+                    guild_id=guild_id,
+                    user_id=winner_id,
+                    game_key=CasinoGameType.DUEL.value,
+                    stake=bet,
+                    is_loss=False,
+                    metadata={"source": "duel", "opponent_id": loser_id},
+                )
+                loser_credit = await self._repository.apply_credit_protection(
+                    guild_id=guild_id,
+                    user_id=loser_id,
+                    game_key=CasinoGameType.DUEL.value,
+                    stake=bet,
+                    is_loss=True,
+                    metadata={"source": "duel", "opponent_id": winner_id},
+                )
 
             self._set_cooldown(guild_id, challenger_id, CasinoGameType.DUEL)
             self._set_cooldown(guild_id, challenged_id, CasinoGameType.DUEL)
@@ -355,16 +390,31 @@ class CasinoService:
         if winner_id is not None:
             if winner_id == challenger_id:
                 challenger_wallet = winner_wallet
-                challenged_wallet = await self._repository.get_wallet(
-                    guild_id,
-                    challenged_id,
+                if winner_credit.wallet is not None:
+                    challenger_wallet = winner_credit.wallet
+                challenged_wallet = (
+                    loser_credit.wallet
+                    or await self._repository.get_wallet(guild_id, challenged_id)
                 )
+                challenger_cashback = winner_credit.cashback_amount
+                challenged_cashback = loser_credit.cashback_amount
             else:
-                challenger_wallet = await self._repository.get_wallet(
-                    guild_id,
-                    challenger_id,
+                challenger_wallet = (
+                    loser_credit.wallet
+                    or await self._repository.get_wallet(guild_id, challenger_id)
                 )
                 challenged_wallet = winner_wallet
+                if winner_credit.wallet is not None:
+                    challenged_wallet = winner_credit.wallet
+                challenger_cashback = loser_credit.cashback_amount
+                challenged_cashback = winner_credit.cashback_amount
+        else:
+            if challenger_credit.wallet is not None:
+                challenger_wallet = challenger_credit.wallet
+            if challenged_credit.wallet is not None:
+                challenged_wallet = challenged_credit.wallet
+            challenger_cashback = challenger_credit.cashback_amount
+            challenged_cashback = challenged_credit.cashback_amount
         result = DuelResult(
             guild_id=guild_id,
             challenger_id=challenger_id,
@@ -378,6 +428,8 @@ class CasinoService:
             detail_lines=detail_lines,
             challenger_wallet=challenger_wallet,
             challenged_wallet=challenged_wallet,
+            challenger_cashback=challenger_cashback,
+            challenged_cashback=challenged_cashback,
         )
         await self._unlock_duel_progress(result)
         return result
@@ -401,7 +453,10 @@ class CasinoService:
             in {
                 EconomyTransactionType.CASINO_BET,
                 EconomyTransactionType.CASINO_PAYOUT,
+                EconomyTransactionType.MATCH_BET,
+                EconomyTransactionType.MATCH_BET_PAYOUT,
                 EconomyTransactionType.REFUND,
+                EconomyTransactionType.CREDIT_CASHBACK,
             }
         ]
         return casino_transactions[: max(1, min(limit, 25))]
@@ -481,6 +536,17 @@ class CasinoService:
                     payout,
                     outcome,
                 )
+            credit = await self._repository.apply_credit_protection(
+                guild_id=guild_id,
+                user_id=user_id,
+                game_key=game_type.value,
+                stake=bet,
+                is_loss=outcome is CasinoOutcome.LOST,
+                metadata={"source": "casino_service"},
+            )
+            cashback = credit.cashback_amount
+            if credit.wallet is not None:
+                wallet = credit.wallet
             self._set_cooldown(guild_id, user_id, game_type)
 
         result = CasinoGameResult(
@@ -489,12 +555,13 @@ class CasinoService:
             game_type=game_type,
             bet=bet,
             payout=payout,
-            profit=payout - bet,
+            profit=payout + cashback - bet,
             outcome=outcome,
             title=title,
             result_label=result_label,
             detail_lines=detail_lines,
             wallet=wallet,
+            cashback=cashback,
         )
         await self._unlock_instant_game_progress(result)
         return result
@@ -984,20 +1051,26 @@ class CasinoService:
         total_bet_amount = sum(
             -transaction.amount
             for transaction in transactions
-            if transaction.type is EconomyTransactionType.CASINO_BET
+            if transaction.type
+            in {EconomyTransactionType.CASINO_BET, EconomyTransactionType.MATCH_BET}
         )
         total_payout_amount = sum(
             transaction.amount
             for transaction in transactions
             if transaction.amount > 0
             and transaction.type
-            in {EconomyTransactionType.CASINO_PAYOUT, EconomyTransactionType.REFUND}
+            in {
+                EconomyTransactionType.CASINO_PAYOUT,
+                EconomyTransactionType.MATCH_BET_PAYOUT,
+                EconomyTransactionType.REFUND,
+                EconomyTransactionType.CREDIT_CASHBACK,
+            }
         )
         biggest_win = max(
             [
                 transaction.amount
                 for transaction in transactions
-                if transaction.type is EconomyTransactionType.CASINO_PAYOUT
+            if transaction.type is EconomyTransactionType.CASINO_PAYOUT
                 and transaction.metadata.get("outcome")
                 in {
                     CasinoOutcome.WON.value,
@@ -1011,7 +1084,8 @@ class CasinoService:
             [
                 -transaction.amount
                 for transaction in transactions
-                if transaction.type is EconomyTransactionType.CASINO_BET
+                if transaction.type
+                in {EconomyTransactionType.CASINO_BET, EconomyTransactionType.MATCH_BET}
             ],
             default=0,
         )
@@ -1021,7 +1095,8 @@ class CasinoService:
             total_games_played=sum(
                 1
                 for transaction in transactions
-                if transaction.type is EconomyTransactionType.CASINO_BET
+                if transaction.type
+                in {EconomyTransactionType.CASINO_BET, EconomyTransactionType.MATCH_BET}
             ),
             total_bet_amount=total_bet_amount,
             total_payout_amount=total_payout_amount,

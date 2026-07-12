@@ -189,6 +189,17 @@ class ScratchCardService:
                     },
                 )
                 wallet = payment.wallet
+            credit = await self._economy_repository.apply_credit_protection(
+                guild_id=guild_id,
+                user_id=user_id,
+                game_key="scratch_card",
+                stake=config.cost,
+                is_loss=payout <= 0,
+                metadata={"source": "scratch_card", "tier": config.tier.value},
+            )
+            cashback = credit.cashback_amount
+            if credit.wallet is not None:
+                wallet = credit.wallet
 
         await self._unlock_progress(guild_id, user_id, payout, jackpot_won)
         return ScratchCardResult(
@@ -203,6 +214,7 @@ class ScratchCardService:
             jackpot_won=jackpot_won,
             seasonal_theme=seasonal.theme,
             wallet=wallet,
+            cashback=cashback,
         )
 
     async def _resolve_jackpot(

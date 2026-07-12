@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,14 @@ from app.models.economy import (
     ActivityClaimCursor,
     ActivityConversionResult,
     BalanceMutationResult,
+    CreditProtectionAdjustmentResult,
+    CreditProtectionResult,
+    CreditProtectionState,
     EconomyTransaction,
     EconomyTransactionType,
+    SavingsAccount,
+    SavingsOperationResult,
+    SavingsOverview,
     UserGameProgressSummary,
     UserProfileResetResult,
     UserTransferResult,
@@ -41,6 +48,13 @@ from app.models.shop import (
 
 class SQLiteEconomyRepository:
     """Persistencia SQLite para economia, atividade, loja e auditoria."""
+
+    CREDIT_CASHBACK_LOW_STREAK = 4
+    CREDIT_CASHBACK_HIGH_STREAK = 5
+    CREDIT_CASHBACK_LOW_PERCENT = 50
+    CREDIT_CASHBACK_HIGH_PERCENT = 80
+    SAVINGS_MAX_DEPOSIT_PERCENT = 70
+    SAVINGS_LOCK_DAYS = 1
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
@@ -70,6 +84,97 @@ class SQLiteEconomyRepository:
             self._get_or_create_wallet_sync,
             guild_id,
             user_id,
+        )
+
+    async def get_credit_protection_state(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> CreditProtectionState:
+        return await asyncio.to_thread(
+            self._get_or_create_credit_protection_state_sync,
+            guild_id,
+            user_id,
+        )
+
+    async def adjust_credit_saves(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        delta: int,
+    ) -> CreditProtectionAdjustmentResult:
+        return await asyncio.to_thread(
+            self._adjust_credit_saves_sync,
+            guild_id,
+            user_id,
+            delta,
+        )
+
+    async def apply_credit_protection(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        game_key: str,
+        stake: int,
+        is_loss: bool,
+        metadata: dict[str, Any] | None = None,
+    ) -> CreditProtectionResult:
+        return await asyncio.to_thread(
+            self._apply_credit_protection_sync,
+            guild_id,
+            user_id,
+            game_key,
+            stake,
+            is_loss,
+            metadata or {},
+        )
+
+    async def get_savings_overview(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        daily_interest_bps: int,
+    ) -> SavingsOverview:
+        return await asyncio.to_thread(
+            self._get_savings_overview_sync,
+            guild_id,
+            user_id,
+            daily_interest_bps,
+        )
+
+    async def deposit_savings(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        amount: int,
+        daily_interest_bps: int,
+    ) -> SavingsOperationResult:
+        return await asyncio.to_thread(
+            self._deposit_savings_sync,
+            guild_id,
+            user_id,
+            amount,
+            daily_interest_bps,
+        )
+
+    async def withdraw_savings(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        amount: int,
+        daily_interest_bps: int,
+    ) -> SavingsOperationResult:
+        return await asyncio.to_thread(
+            self._withdraw_savings_sync,
+            guild_id,
+            user_id,
+            amount,
+            daily_interest_bps,
         )
 
     async def reset_user_profile(
@@ -390,6 +495,7 @@ class SQLiteEconomyRepository:
         price: int,
         is_active: bool,
         created_by: int,
+        saves_reward: int = 0,
     ) -> LevelConfig:
         return await asyncio.to_thread(
             self._upsert_level_config_sync,
@@ -399,6 +505,7 @@ class SQLiteEconomyRepository:
             price,
             is_active,
             created_by,
+            saves_reward,
         )
 
     async def list_level_configs(
@@ -490,7 +597,9 @@ class SQLiteEconomyRepository:
                         casino_min_bet_scratch_card INTEGER NOT NULL DEFAULT 1,
                         casino_min_bet_collective_race INTEGER NOT NULL DEFAULT 1,
                         casino_min_bet_match_bet INTEGER NOT NULL DEFAULT 1,
+                        casino_min_bet_truco INTEGER NOT NULL DEFAULT 1,
                         casino_limiters_enabled INTEGER NOT NULL DEFAULT 1,
+                        savings_daily_interest_bps INTEGER NOT NULL DEFAULT 0,
                         economy_manager_role_id INTEGER,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
@@ -514,6 +623,12 @@ class SQLiteEconomyRepository:
                     "casino_limiters_enabled",
                     "INTEGER NOT NULL DEFAULT 1",
                 )
+                self._ensure_column(
+                    connection,
+                    "guild_settings",
+                    "savings_daily_interest_bps",
+                    "INTEGER NOT NULL DEFAULT 0",
+                )
                 for column in (
                     "casino_min_bet_coin_flip",
                     "casino_min_bet_dice",
@@ -525,6 +640,7 @@ class SQLiteEconomyRepository:
                     "casino_min_bet_scratch_card",
                     "casino_min_bet_collective_race",
                     "casino_min_bet_match_bet",
+                    "casino_min_bet_truco",
                 ):
                     self._ensure_column(
                         connection,
@@ -545,6 +661,24 @@ class SQLiteEconomyRepository:
                     )
                     """)
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS user_savings_accounts (
+                        guild_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        balance INTEGER NOT NULL DEFAULT 0,
+                        total_interest_earned INTEGER NOT NULL DEFAULT 0,
+                        last_interest_at TEXT NOT NULL,
+                        locked_until TEXT,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (guild_id, user_id)
+                    )
+                    """)
+                self._ensure_column(
+                    connection,
+                    "user_savings_accounts",
+                    "total_interest_earned",
+                    "INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.execute("""
                     CREATE TABLE IF NOT EXISTS activity_claim_cursors (
                         guild_id INTEGER NOT NULL,
                         user_id INTEGER NOT NULL,
@@ -564,6 +698,16 @@ class SQLiteEconomyRepository:
                         last_claim_date TEXT,
                         claim_count INTEGER NOT NULL DEFAULT 0,
                         PRIMARY KEY (guild_id, user_id, reward_key)
+                    )
+                    """)
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS user_credit_protection (
+                        guild_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        saves INTEGER NOT NULL DEFAULT 0,
+                        lose_streak INTEGER NOT NULL DEFAULT 0,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (guild_id, user_id)
                     )
                     """)
                 connection.execute("""
@@ -617,6 +761,7 @@ class SQLiteEconomyRepository:
                         max_per_user INTEGER,
                         role_id INTEGER,
                         delivery_message TEXT,
+                        duration_days INTEGER,
                         is_active INTEGER NOT NULL DEFAULT 1,
                         created_by INTEGER NOT NULL,
                         created_at TEXT NOT NULL,
@@ -624,6 +769,12 @@ class SQLiteEconomyRepository:
                         deleted_at TEXT
                     )
                     """)
+                self._ensure_column(
+                    connection,
+                    "reward_items",
+                    "duration_days",
+                    "INTEGER",
+                )
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS reward_purchases (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -660,6 +811,7 @@ class SQLiteEconomyRepository:
                         level INTEGER NOT NULL,
                         role_id INTEGER NOT NULL,
                         price INTEGER NOT NULL,
+                        saves_reward INTEGER NOT NULL DEFAULT 0,
                         is_active INTEGER NOT NULL DEFAULT 1,
                         created_by INTEGER NOT NULL,
                         created_at TEXT NOT NULL,
@@ -668,6 +820,12 @@ class SQLiteEconomyRepository:
                         UNIQUE(guild_id, role_id)
                     )
                     """)
+                self._ensure_column(
+                    connection,
+                    "shop_level_configs",
+                    "saves_reward",
+                    "INTEGER NOT NULL DEFAULT 0",
+                )
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS user_level_upgrades (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -707,6 +865,14 @@ class SQLiteEconomyRepository:
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_economy_reward_claims_user
                     ON economy_reward_claims(guild_id, user_id, reward_key)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_user_credit_protection_guild
+                    ON user_credit_protection(guild_id, user_id)
+                    """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_user_savings_accounts_guild
+                    ON user_savings_accounts(guild_id, user_id)
                     """)
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_native_voice_sessions_guild_user
@@ -790,7 +956,9 @@ class SQLiteEconomyRepository:
             "casino_min_bet_scratch_card",
             "casino_min_bet_collective_race",
             "casino_min_bet_match_bet",
+            "casino_min_bet_truco",
             "casino_limiters_enabled",
+            "savings_daily_interest_bps",
             "economy_manager_role_id",
         }
         assignments: list[str] = []
@@ -835,6 +1003,18 @@ class SQLiteEconomyRepository:
                         COALESCE(SUM(total_earned), 0) AS total_earned,
                         COALESCE(SUM(total_spent), 0) AS total_spent
                     FROM user_wallets
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchone()
+                savings_row = connection.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS account_count,
+                        COALESCE(SUM(balance), 0) AS total_balance,
+                        COALESCE(SUM(total_interest_earned), 0)
+                            AS total_interest_earned
+                    FROM user_savings_accounts
                     WHERE guild_id = ?
                     """,
                     (guild_id,),
@@ -934,6 +1114,11 @@ class SQLiteEconomyRepository:
                 "earned": int(wallet_row["total_earned"] or 0),
                 "spent": int(wallet_row["total_spent"] or 0),
             },
+            "savings": {
+                "count": int(savings_row["account_count"] or 0),
+                "balance": int(savings_row["total_balance"] or 0),
+                "interest_earned": int(savings_row["total_interest_earned"] or 0),
+            },
             "transactions": transactions,
             "shop": {
                 "rewards_total": int(shop_row["rewards_total"] or 0),
@@ -977,6 +1162,20 @@ class SQLiteEconomyRepository:
                 deleted_level_upgrades = connection.execute(
                     """
                     DELETE FROM user_level_upgrades
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_credit_protection = connection.execute(
+                    """
+                    DELETE FROM user_credit_protection
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                ).rowcount
+                deleted_savings_accounts = connection.execute(
+                    """
+                    DELETE FROM user_savings_accounts
                     WHERE guild_id = ? AND user_id = ?
                     """,
                     (guild_id, user_id),
@@ -1035,6 +1234,8 @@ class SQLiteEconomyRepository:
             deleted_purchases=max(0, deleted_purchases),
             deleted_wallets=max(0, deleted_wallets),
             deleted_level_upgrades=max(0, deleted_level_upgrades),
+            deleted_credit_protection=max(0, deleted_credit_protection),
+            deleted_savings_accounts=max(0, deleted_savings_accounts),
         )
 
     def _get_or_create_wallet_sync(self, guild_id: int, user_id: int) -> UserWallet:
@@ -1042,6 +1243,481 @@ class SQLiteEconomyRepository:
             with self._connect() as connection:
                 row = self._ensure_wallet(connection, guild_id, user_id)
         return self._row_to_wallet(row)
+
+    def _get_or_create_credit_protection_state_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+    ) -> CreditProtectionState:
+        with self._lock:
+            with self._connect() as connection:
+                row = self._ensure_credit_protection_state(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+        return self._row_to_credit_protection_state(row)
+
+    def _adjust_credit_saves_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        delta: int,
+    ) -> CreditProtectionAdjustmentResult:
+        if delta == 0:
+            raise ValueError("A quantidade de saves precisa ser diferente de zero.")
+
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                before_row = self._ensure_credit_protection_state(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                before = self._row_to_credit_protection_state(before_row)
+                saves_after = before.saves + delta
+                if saves_after < 0:
+                    connection.rollback()
+                    raise ValueError("O usuario nao possui saves suficientes.")
+
+                now = serialize_datetime(utc_now())
+                connection.execute(
+                    """
+                    UPDATE user_credit_protection
+                    SET saves = ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (saves_after, now, guild_id, user_id),
+                )
+                after_row = self._get_credit_protection_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                connection.commit()
+
+        if after_row is None:
+            raise RuntimeError("Nao foi possivel recuperar os saves do usuario.")
+        return CreditProtectionAdjustmentResult(
+            before=before,
+            after=self._row_to_credit_protection_state(after_row),
+            delta=delta,
+        )
+
+    def _apply_credit_protection_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        game_key: str,
+        stake: int,
+        is_loss: bool,
+        metadata: dict[str, Any],
+    ) -> CreditProtectionResult:
+        if stake <= 0:
+            return CreditProtectionResult(
+                state=self._get_or_create_credit_protection_state_sync(
+                    guild_id,
+                    user_id,
+                )
+            )
+
+        normalized_game_key = (game_key or "game").strip()[:64] or "game"
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                state_row = self._ensure_credit_protection_state(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                saves = int(state_row["saves"])
+                lose_streak_before = int(state_row["lose_streak"])
+                now = serialize_datetime(utc_now())
+                transaction: EconomyTransaction | None = None
+                wallet: UserWallet | None = None
+                cashback_amount = 0
+                cashback_percent = 0
+                save_consumed = False
+
+                if not is_loss:
+                    connection.execute(
+                        """
+                        UPDATE user_credit_protection
+                        SET lose_streak = 0,
+                            updated_at = ?
+                        WHERE guild_id = ? AND user_id = ?
+                        """,
+                        (now, guild_id, user_id),
+                    )
+                    triggered_streak = 0
+                else:
+                    triggered_streak = lose_streak_before + 1
+                    if (
+                        saves > 0
+                        and triggered_streak >= self.CREDIT_CASHBACK_HIGH_STREAK
+                    ):
+                        cashback_percent = self.CREDIT_CASHBACK_HIGH_PERCENT
+                    elif (
+                        saves > 0
+                        and triggered_streak >= self.CREDIT_CASHBACK_LOW_STREAK
+                    ):
+                        cashback_percent = self.CREDIT_CASHBACK_LOW_PERCENT
+
+                    if cashback_percent:
+                        cashback_amount = max(1, (stake * cashback_percent) // 100)
+                        saves -= 1
+                        save_consumed = True
+                        wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                        balance_before = int(wallet_row["balance"])
+                        balance_after = balance_before + cashback_amount
+                        connection.execute(
+                            """
+                            UPDATE user_wallets
+                            SET balance = ?,
+                                total_earned = total_earned + ?,
+                                updated_at = ?
+                            WHERE guild_id = ? AND user_id = ?
+                            """,
+                            (
+                                balance_after,
+                                cashback_amount,
+                                now,
+                                guild_id,
+                                user_id,
+                            ),
+                        )
+                        transaction = self._insert_transaction(
+                            connection,
+                            guild_id=guild_id,
+                            user_id=user_id,
+                            actor_id=None,
+                            transaction_type=EconomyTransactionType.CREDIT_CASHBACK,
+                            amount=cashback_amount,
+                            balance_before=balance_before,
+                            balance_after=balance_after,
+                            reason="credit_protection_cashback",
+                            metadata={
+                                **metadata,
+                                "game": normalized_game_key,
+                                "stake": stake,
+                                "cashback_percent": cashback_percent,
+                                "lose_streak": triggered_streak,
+                                "save_consumed": True,
+                            },
+                            created_at=now,
+                        )
+
+                    connection.execute(
+                        """
+                        UPDATE user_credit_protection
+                        SET saves = ?,
+                            lose_streak = ?,
+                            updated_at = ?
+                        WHERE guild_id = ? AND user_id = ?
+                        """,
+                        (saves, triggered_streak, now, guild_id, user_id),
+                    )
+
+                final_row = self._get_credit_protection_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                if cashback_amount > 0:
+                    wallet_row = self._get_wallet_row(connection, guild_id, user_id)
+                    wallet = self._row_to_wallet(wallet_row)
+                connection.commit()
+
+        if final_row is None:
+            raise RuntimeError("Nao foi possivel recuperar a protecao de credito.")
+        return CreditProtectionResult(
+            state=self._row_to_credit_protection_state(final_row),
+            wallet=wallet,
+            transaction=transaction,
+            cashback_amount=cashback_amount,
+            cashback_percent=cashback_percent,
+            save_consumed=save_consumed,
+            triggered_streak=triggered_streak,
+        )
+
+    def _get_savings_overview_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        daily_interest_bps: int,
+    ) -> SavingsOverview:
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                account_row = self._ensure_savings_account(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                interest_applied = self._apply_savings_interest(
+                    connection,
+                    account_row,
+                    daily_interest_bps,
+                )
+                account_row = self._get_savings_account_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                connection.commit()
+
+        if account_row is None:
+            raise RuntimeError("Não foi possível recuperar a poupança.")
+        return self._build_savings_overview(
+            wallet_row,
+            account_row,
+            daily_interest_bps,
+            interest_applied,
+        )
+
+    def _deposit_savings_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        amount: int,
+        daily_interest_bps: int,
+    ) -> SavingsOperationResult:
+        if amount <= 0:
+            raise ValueError("O valor do depósito precisa ser maior que zero.")
+
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                account_row = self._ensure_savings_account(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                interest_applied = self._apply_savings_interest(
+                    connection,
+                    account_row,
+                    daily_interest_bps,
+                )
+                account_row = self._get_savings_account_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                if account_row is None:
+                    connection.rollback()
+                    raise RuntimeError("Não foi possível recuperar a poupança.")
+
+                balance_before = int(wallet_row["balance"])
+                max_deposit = self._calculate_max_savings_deposit(balance_before)
+                if amount > max_deposit:
+                    connection.rollback()
+                    raise ValueError(
+                        "Você pode depositar no máximo 70% do saldo em caixa. "
+                        f"Limite atual: {max_deposit}."
+                    )
+                if amount > balance_before:
+                    connection.rollback()
+                    raise ValueError("Saldo insuficiente para esse depósito.")
+
+                now_dt = utc_now()
+                now = serialize_datetime(now_dt)
+                locked_until = serialize_datetime(
+                    now_dt + timedelta(days=self.SAVINGS_LOCK_DAYS)
+                )
+                balance_after = balance_before - amount
+                savings_after = int(account_row["balance"]) + amount
+                connection.execute(
+                    """
+                    UPDATE user_wallets
+                    SET balance = ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (balance_after, now, guild_id, user_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE user_savings_accounts
+                    SET balance = ?,
+                        last_interest_at = ?,
+                        locked_until = ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (
+                        savings_after,
+                        now,
+                        locked_until,
+                        now,
+                        guild_id,
+                        user_id,
+                    ),
+                )
+                transaction = self._insert_transaction(
+                    connection,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    actor_id=user_id,
+                    transaction_type=EconomyTransactionType.SAVINGS_DEPOSIT,
+                    amount=-amount,
+                    balance_before=balance_before,
+                    balance_after=balance_after,
+                    reason="savings_deposit",
+                    metadata={
+                        "interest_applied": interest_applied,
+                        "locked_until": locked_until,
+                        "max_deposit_percent": self.SAVINGS_MAX_DEPOSIT_PERCENT,
+                    },
+                    created_at=now,
+                )
+                wallet_row = self._get_wallet_row(connection, guild_id, user_id)
+                account_row = self._get_savings_account_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                connection.commit()
+
+        if wallet_row is None or account_row is None:
+            raise RuntimeError("Não foi possível recuperar a poupança.")
+        overview = self._build_savings_overview(
+            wallet_row,
+            account_row,
+            daily_interest_bps,
+            interest_applied,
+        )
+        return SavingsOperationResult(
+            overview=overview,
+            transaction=transaction,
+            amount=amount,
+            interest_applied=interest_applied,
+        )
+
+    def _withdraw_savings_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        amount: int,
+        daily_interest_bps: int,
+    ) -> SavingsOperationResult:
+        if amount <= 0:
+            raise ValueError("O valor do saque precisa ser maior que zero.")
+
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                account_row = self._ensure_savings_account(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                interest_applied = self._apply_savings_interest(
+                    connection,
+                    account_row,
+                    daily_interest_bps,
+                )
+                account_row = self._get_savings_account_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                if account_row is None:
+                    connection.rollback()
+                    raise RuntimeError("Não foi possível recuperar a poupança.")
+
+                locked_until_raw = account_row["locked_until"]
+                if locked_until_raw is not None:
+                    locked_until = parse_datetime(str(locked_until_raw))
+                    now_dt = utc_now()
+                    if locked_until > now_dt:
+                        locked_until_label = locked_until.strftime(
+                            "%d/%m/%Y às %H:%M UTC"
+                        )
+                        connection.rollback()
+                        raise ValueError(
+                            "Sua poupança ainda está bloqueada até "
+                            f"{locked_until_label}."
+                        )
+                else:
+                    now_dt = utc_now()
+
+                savings_before = int(account_row["balance"])
+                if amount > savings_before:
+                    connection.rollback()
+                    raise ValueError("Saldo insuficiente na poupança.")
+
+                now = serialize_datetime(now_dt)
+                wallet_before = int(wallet_row["balance"])
+                wallet_after = wallet_before + amount
+                savings_after = savings_before - amount
+                next_locked_until = None if savings_after == 0 else locked_until_raw
+                connection.execute(
+                    """
+                    UPDATE user_wallets
+                    SET balance = ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (wallet_after, now, guild_id, user_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE user_savings_accounts
+                    SET balance = ?,
+                        last_interest_at = ?,
+                        locked_until = ?,
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (
+                        savings_after,
+                        now,
+                        next_locked_until,
+                        now,
+                        guild_id,
+                        user_id,
+                    ),
+                )
+                transaction = self._insert_transaction(
+                    connection,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    actor_id=user_id,
+                    transaction_type=EconomyTransactionType.SAVINGS_WITHDRAW,
+                    amount=amount,
+                    balance_before=wallet_before,
+                    balance_after=wallet_after,
+                    reason="savings_withdraw",
+                    metadata={"interest_applied": interest_applied},
+                    created_at=now,
+                )
+                wallet_row = self._get_wallet_row(connection, guild_id, user_id)
+                account_row = self._get_savings_account_row(
+                    connection,
+                    guild_id,
+                    user_id,
+                )
+                connection.commit()
+
+        if wallet_row is None or account_row is None:
+            raise RuntimeError("Não foi possível recuperar a poupança.")
+        overview = self._build_savings_overview(
+            wallet_row,
+            account_row,
+            daily_interest_bps,
+            interest_applied,
+        )
+        return SavingsOperationResult(
+            overview=overview,
+            transaction=transaction,
+            amount=amount,
+            interest_applied=interest_applied,
+        )
 
     def _mutate_balance_sync(
         self,
@@ -1319,7 +1995,8 @@ class SQLiteEconomyRepository:
                           'CASINO_PAYOUT',
                           'MATCH_BET',
                           'MATCH_BET_PAYOUT',
-                          'REFUND'
+                          'REFUND',
+                          'CREDIT_CASHBACK'
                       )
                     """,
                     (guild_id, user_id, since),
@@ -1360,7 +2037,14 @@ class SQLiteEconomyRepository:
                     SELECT *
                     FROM economy_transactions
                     WHERE guild_id = ?
-                      AND type IN ('CASINO_BET', 'CASINO_PAYOUT', 'REFUND')
+                      AND type IN (
+                          'CASINO_BET',
+                          'CASINO_PAYOUT',
+                          'MATCH_BET',
+                          'MATCH_BET_PAYOUT',
+                          'REFUND',
+                          'CREDIT_CASHBACK'
+                      )
                     ORDER BY created_at DESC, id DESC
                     LIMIT ?
                     """,
@@ -1382,7 +2066,12 @@ class SQLiteEconomyRepository:
                     FROM economy_transactions
                     WHERE guild_id = ?
                       AND user_id = ?
-                      AND type IN ('CASINO_BET', 'CASINO_PAYOUT', 'REFUND')
+                      AND type IN (
+                          'CASINO_BET',
+                          'CASINO_PAYOUT',
+                          'REFUND',
+                          'CREDIT_CASHBACK'
+                      )
                     ORDER BY created_at ASC, id ASC
                     """,
                     (guild_id, user_id),
@@ -1416,7 +2105,10 @@ class SQLiteEconomyRepository:
                     scratch_plays += 1
                 continue
 
-            if transaction.type is EconomyTransactionType.REFUND:
+            if transaction.type in {
+                EconomyTransactionType.REFUND,
+                EconomyTransactionType.CREDIT_CASHBACK,
+            }:
                 net_profit += transaction.amount
                 continue
 
@@ -1897,11 +2589,12 @@ class SQLiteEconomyRepository:
                         max_per_user,
                         role_id,
                         delivery_message,
+                        duration_days,
                         is_active,
                         created_by,
                         created_at,
                         updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                     """,
                     (
                         reward.guild_id,
@@ -1914,6 +2607,7 @@ class SQLiteEconomyRepository:
                         reward.max_per_user,
                         reward.role_id,
                         reward.delivery_message,
+                        reward.duration_days,
                         reward.created_by,
                         now,
                         now,
@@ -1985,6 +2679,7 @@ class SQLiteEconomyRepository:
             "max_per_user": "max_per_user",
             "role_id": "role_id",
             "delivery_message": "delivery_message",
+            "duration_days": "duration_days",
             "is_active": "is_active",
         }
         assignments: list[str] = []
@@ -2254,6 +2949,7 @@ class SQLiteEconomyRepository:
         price: int,
         is_active: bool,
         created_by: int,
+        saves_reward: int,
     ) -> LevelConfig:
         now = serialize_datetime(utc_now())
         with self._lock:
@@ -2266,14 +2962,16 @@ class SQLiteEconomyRepository:
                         level,
                         role_id,
                         price,
+                        saves_reward,
                         is_active,
                         created_by,
                         created_at,
                         updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(guild_id, level) DO UPDATE SET
                         role_id = excluded.role_id,
                         price = excluded.price,
+                        saves_reward = excluded.saves_reward,
                         is_active = excluded.is_active,
                         updated_at = excluded.updated_at
                     """,
@@ -2282,6 +2980,7 @@ class SQLiteEconomyRepository:
                         level,
                         role_id,
                         price,
+                        saves_reward,
                         int(is_active),
                         created_by,
                         now,
@@ -2449,9 +3148,30 @@ class SQLiteEconomyRepository:
                     metadata={
                         "level": level_config.level,
                         "role_id": level_config.role_id,
+                        "saves_reward": level_config.saves_reward,
                     },
                     created_at=now,
                 )
+                if level_config.saves_reward > 0:
+                    protection_row = self._ensure_credit_protection_state(
+                        connection,
+                        guild_id,
+                        user_id,
+                    )
+                    connection.execute(
+                        """
+                        UPDATE user_credit_protection
+                        SET saves = ?,
+                            updated_at = ?
+                        WHERE guild_id = ? AND user_id = ?
+                        """,
+                        (
+                            int(protection_row["saves"]) + level_config.saves_reward,
+                            now,
+                            guild_id,
+                            user_id,
+                        ),
+                    )
                 try:
                     purchase_cursor = connection.execute(
                         """
@@ -2598,6 +3318,176 @@ class SQLiteEconomyRepository:
         row = self._get_wallet_row(connection, guild_id, user_id)
         if row is None:
             raise RuntimeError("Nao foi possivel criar carteira.")
+        return row
+
+    @staticmethod
+    def _get_savings_account_row(
+        connection: sqlite3.Connection,
+        guild_id: int,
+        user_id: int,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT *
+            FROM user_savings_accounts
+            WHERE guild_id = ? AND user_id = ?
+            """,
+            (guild_id, user_id),
+        ).fetchone()
+
+    def _ensure_savings_account(
+        self,
+        connection: sqlite3.Connection,
+        guild_id: int,
+        user_id: int,
+    ) -> sqlite3.Row:
+        row = self._get_savings_account_row(connection, guild_id, user_id)
+        if row is not None:
+            return row
+
+        now = serialize_datetime(utc_now())
+        connection.execute(
+            """
+            INSERT INTO user_savings_accounts (
+                guild_id,
+                user_id,
+                last_interest_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(guild_id, user_id) DO NOTHING
+            """,
+            (guild_id, user_id, now, now),
+        )
+        row = self._get_savings_account_row(connection, guild_id, user_id)
+        if row is None:
+            raise RuntimeError("Não foi possível criar poupança.")
+        return row
+
+    def _apply_savings_interest(
+        self,
+        connection: sqlite3.Connection,
+        account_row: sqlite3.Row,
+        daily_interest_bps: int,
+    ) -> int:
+        balance = int(account_row["balance"])
+        bps = max(0, int(daily_interest_bps))
+        if balance <= 0:
+            return 0
+
+        now_dt = utc_now()
+        last_interest_at = parse_datetime(str(account_row["last_interest_at"]))
+        elapsed_days = int((now_dt - last_interest_at).total_seconds() // 86400)
+        if elapsed_days <= 0:
+            return 0
+
+        next_interest_at = last_interest_at + timedelta(days=elapsed_days)
+        now = serialize_datetime(now_dt)
+        if bps <= 0:
+            connection.execute(
+                """
+                UPDATE user_savings_accounts
+                SET last_interest_at = ?,
+                    updated_at = ?
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (
+                    serialize_datetime(next_interest_at),
+                    now,
+                    int(account_row["guild_id"]),
+                    int(account_row["user_id"]),
+                ),
+            )
+            return 0
+
+        interest_total = 0
+        new_balance = balance
+        for _ in range(elapsed_days):
+            daily_interest = (new_balance * bps) // 10000
+            if daily_interest > 0:
+                new_balance += daily_interest
+                interest_total += daily_interest
+
+        connection.execute(
+            """
+            UPDATE user_savings_accounts
+            SET balance = ?,
+                total_interest_earned = total_interest_earned + ?,
+                last_interest_at = ?,
+                updated_at = ?
+            WHERE guild_id = ? AND user_id = ?
+            """,
+            (
+                new_balance,
+                interest_total,
+                serialize_datetime(next_interest_at),
+                now,
+                int(account_row["guild_id"]),
+                int(account_row["user_id"]),
+            ),
+        )
+        return interest_total
+
+    def _build_savings_overview(
+        self,
+        wallet_row: sqlite3.Row,
+        account_row: sqlite3.Row,
+        daily_interest_bps: int,
+        interest_applied: int,
+    ) -> SavingsOverview:
+        wallet = self._row_to_wallet(wallet_row)
+        return SavingsOverview(
+            wallet=wallet,
+            account=self._row_to_savings_account(account_row),
+            daily_interest_bps=max(0, int(daily_interest_bps)),
+            max_deposit=self._calculate_max_savings_deposit(wallet.balance),
+            interest_applied=interest_applied,
+        )
+
+    @classmethod
+    def _calculate_max_savings_deposit(cls, wallet_balance: int) -> int:
+        return max(0, (int(wallet_balance) * cls.SAVINGS_MAX_DEPOSIT_PERCENT) // 100)
+
+    @staticmethod
+    def _get_credit_protection_row(
+        connection: sqlite3.Connection,
+        guild_id: int,
+        user_id: int,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT *
+            FROM user_credit_protection
+            WHERE guild_id = ? AND user_id = ?
+            """,
+            (guild_id, user_id),
+        ).fetchone()
+
+    def _ensure_credit_protection_state(
+        self,
+        connection: sqlite3.Connection,
+        guild_id: int,
+        user_id: int,
+    ) -> sqlite3.Row:
+        row = self._get_credit_protection_row(connection, guild_id, user_id)
+        if row is not None:
+            return row
+
+        now = serialize_datetime(utc_now())
+        connection.execute(
+            """
+            INSERT INTO user_credit_protection (
+                guild_id,
+                user_id,
+                saves,
+                lose_streak,
+                updated_at
+            ) VALUES (?, ?, 0, 0, ?)
+            """,
+            (guild_id, user_id, now),
+        )
+        row = self._get_credit_protection_row(connection, guild_id, user_id)
+        if row is None:
+            raise RuntimeError("Nao foi possivel criar protecao de credito.")
         return row
 
     @staticmethod
@@ -2867,7 +3757,9 @@ class SQLiteEconomyRepository:
                 row["casino_min_bet_collective_race"]
             ),
             casino_min_bet_match_bet=int(row["casino_min_bet_match_bet"]),
+            casino_min_bet_truco=int(row["casino_min_bet_truco"]),
             casino_limiters_enabled=bool(row["casino_limiters_enabled"]),
+            savings_daily_interest_bps=int(row["savings_daily_interest_bps"]),
             economy_manager_role_id=(
                 int(row["economy_manager_role_id"])
                 if row["economy_manager_role_id"] is not None
@@ -2886,6 +3778,32 @@ class SQLiteEconomyRepository:
             total_earned=int(row["total_earned"]),
             total_spent=int(row["total_spent"]),
             created_at=parse_datetime(str(row["created_at"])),
+            updated_at=parse_datetime(str(row["updated_at"])),
+        )
+
+    @staticmethod
+    def _row_to_credit_protection_state(row: sqlite3.Row) -> CreditProtectionState:
+        return CreditProtectionState(
+            guild_id=int(row["guild_id"]),
+            user_id=int(row["user_id"]),
+            saves=int(row["saves"]),
+            lose_streak=int(row["lose_streak"]),
+            updated_at=parse_datetime(str(row["updated_at"])),
+        )
+
+    @staticmethod
+    def _row_to_savings_account(row: sqlite3.Row) -> SavingsAccount:
+        return SavingsAccount(
+            guild_id=int(row["guild_id"]),
+            user_id=int(row["user_id"]),
+            balance=int(row["balance"]),
+            total_interest_earned=int(row["total_interest_earned"]),
+            last_interest_at=parse_datetime(str(row["last_interest_at"])),
+            locked_until=(
+                parse_datetime(str(row["locked_until"]))
+                if row["locked_until"] is not None
+                else None
+            ),
             updated_at=parse_datetime(str(row["updated_at"])),
         )
 
@@ -2972,6 +3890,11 @@ class SQLiteEconomyRepository:
                 if row["delivery_message"] is not None
                 else None
             ),
+            duration_days=(
+                int(row["duration_days"])
+                if row["duration_days"] is not None
+                else None
+            ),
             is_active=bool(row["is_active"]),
             created_by=int(row["created_by"]),
             created_at=parse_datetime(str(row["created_at"])),
@@ -3018,6 +3941,7 @@ class SQLiteEconomyRepository:
             created_by=int(row["created_by"]),
             created_at=parse_datetime(str(row["created_at"])),
             updated_at=parse_datetime(str(row["updated_at"])),
+            saves_reward=int(row["saves_reward"]),
         )
 
     @staticmethod

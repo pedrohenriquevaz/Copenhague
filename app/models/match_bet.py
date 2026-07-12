@@ -113,3 +113,4 @@ class MatchBetSettlementResult:
     refunded_tickets: int
     total_paid: int
     total_refunded: int
+    total_cashback: int = 0
