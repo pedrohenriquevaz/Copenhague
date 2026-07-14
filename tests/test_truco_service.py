@@ -19,8 +19,6 @@ from app.models.truco import (
     TrucoSuit,
     TrucoTeam,
 )
-from app.repositories.economy_repository import SQLiteEconomyRepository
-from app.repositories.truco_repository import SQLiteTrucoRepository
 from app.services.economy_service import EconomyService
 from app.services.truco_service import TrucoService, TrucoValidationError
 from app.ui.truco_table_image import render_truco_table_image
@@ -29,11 +27,12 @@ from app.ui.truco_view import (
     _register_truco_hand,
     refresh_open_truco_hands,
 )
+from tests.postgres_support import PostgresEconomyRepository, PostgresTrucoRepository
 
 
 async def test_truco_accepts_all_debits_stakes_and_splits_pot(tmp_path) -> None:
-    economy_repository = SQLiteEconomyRepository(tmp_path / "economy.sqlite3")
-    truco_repository = SQLiteTrucoRepository(tmp_path / "economy.sqlite3")
+    economy_repository = PostgresEconomyRepository(tmp_path / "economy.pg")
+    truco_repository = PostgresTrucoRepository(tmp_path / "economy.pg")
     economy = EconomyService(economy_repository)
     service = TrucoService(
         truco_repository,
@@ -94,8 +93,8 @@ async def test_truco_accepts_all_debits_stakes_and_splits_pot(tmp_path) -> None:
 
 
 async def test_truco_challenge_blocks_cards_until_acceptance(tmp_path) -> None:
-    economy_repository = SQLiteEconomyRepository(tmp_path / "economy.sqlite3")
-    truco_repository = SQLiteTrucoRepository(tmp_path / "economy.sqlite3")
+    economy_repository = PostgresEconomyRepository(tmp_path / "economy.pg")
+    truco_repository = PostgresTrucoRepository(tmp_path / "economy.pg")
     economy = EconomyService(economy_repository)
     service = TrucoService(
         truco_repository,
@@ -140,8 +139,8 @@ async def test_truco_challenge_blocks_cards_until_acceptance(tmp_path) -> None:
 
 
 async def test_admin_force_cancel_refunds_active_game_once(tmp_path) -> None:
-    economy_repository = SQLiteEconomyRepository(tmp_path / "economy.sqlite3")
-    truco_repository = SQLiteTrucoRepository(tmp_path / "economy.sqlite3")
+    economy_repository = PostgresEconomyRepository(tmp_path / "economy.pg")
+    truco_repository = PostgresTrucoRepository(tmp_path / "economy.pg")
     economy = EconomyService(economy_repository)
     service = TrucoService(
         truco_repository,
@@ -190,9 +189,9 @@ async def test_admin_force_cancel_refunds_active_game_once(tmp_path) -> None:
 
 
 async def test_truco_pve_pays_two_times_stake_to_human_winner(tmp_path) -> None:
-    database = tmp_path / "economy.sqlite3"
-    economy_repository = SQLiteEconomyRepository(database)
-    truco_repository = SQLiteTrucoRepository(database)
+    database = tmp_path / "economy.pg"
+    economy_repository = PostgresEconomyRepository(database)
+    truco_repository = PostgresTrucoRepository(database)
     economy = EconomyService(economy_repository)
     await economy.give_points(
         guild_id=1,
@@ -221,9 +220,9 @@ async def test_truco_pve_pays_two_times_stake_to_human_winner(tmp_path) -> None:
 
 
 async def test_truco_machine_plays_its_turn_automatically(tmp_path) -> None:
-    database = tmp_path / "economy.sqlite3"
-    economy_repository = SQLiteEconomyRepository(database)
-    truco_repository = SQLiteTrucoRepository(database)
+    database = tmp_path / "economy.pg"
+    economy_repository = PostgresEconomyRepository(database)
+    truco_repository = PostgresTrucoRepository(database)
     economy = EconomyService(economy_repository)
     await economy.give_points(
         guild_id=1,
@@ -259,9 +258,9 @@ async def test_truco_machine_plays_its_turn_automatically(tmp_path) -> None:
 async def test_truco_pve_preserves_completed_round_until_reveal_finishes(
     tmp_path,
 ) -> None:
-    database = tmp_path / "economy.sqlite3"
-    economy_repository = SQLiteEconomyRepository(database)
-    truco_repository = SQLiteTrucoRepository(database)
+    database = tmp_path / "economy.pg"
+    economy_repository = PostgresEconomyRepository(database)
+    truco_repository = PostgresTrucoRepository(database)
     economy = EconomyService(economy_repository)
     await economy.give_points(
         guild_id=1,
@@ -328,8 +327,8 @@ async def test_truco_pve_preserves_completed_round_until_reveal_finishes(
 
 
 def test_closed_card_loses_to_any_open_card(tmp_path) -> None:
-    economy_repository = SQLiteEconomyRepository(tmp_path / "economy.sqlite3")
-    truco_repository = SQLiteTrucoRepository(tmp_path / "economy.sqlite3")
+    economy_repository = PostgresEconomyRepository(tmp_path / "economy.pg")
+    truco_repository = PostgresTrucoRepository(tmp_path / "economy.pg")
     service = TrucoService(truco_repository, economy_repository)
     now = datetime.now(UTC)
     session = TrucoSession(
@@ -364,7 +363,7 @@ def test_closed_card_loses_to_any_open_card(tmp_path) -> None:
 
 
 async def test_truco_table_image_renders_public_game_state(tmp_path) -> None:
-    economy_repository = SQLiteEconomyRepository(tmp_path / "economy.sqlite3")
+    economy_repository = PostgresEconomyRepository(tmp_path / "economy.pg")
     settings = await economy_repository.get_guild_settings(1)
     now = datetime.now(UTC)
     session = TrucoSession(
@@ -417,8 +416,8 @@ async def test_truco_table_image_renders_public_game_state(tmp_path) -> None:
 
 
 async def test_truco_table_image_renders_completed_round_reveal(tmp_path) -> None:
-    economy_repository = SQLiteEconomyRepository(tmp_path / "economy.sqlite3")
-    truco_repository = SQLiteTrucoRepository(tmp_path / "economy.sqlite3")
+    economy_repository = PostgresEconomyRepository(tmp_path / "economy.pg")
+    truco_repository = PostgresTrucoRepository(tmp_path / "economy.pg")
     economy = EconomyService(economy_repository)
     await economy.give_points(
         guild_id=1,
@@ -468,7 +467,7 @@ async def test_truco_table_image_renders_completed_round_reveal(tmp_path) -> Non
 
 
 async def test_open_truco_hand_is_refreshed_for_new_hand(tmp_path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.sqlite3")
+    repository = PostgresEconomyRepository(tmp_path / "economy.pg")
     settings = await repository.get_guild_settings(1)
     session = TrucoSession(
         id=88,

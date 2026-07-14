@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-import threading
-from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.models.bolao import (
     BolaoEvent,
@@ -14,6 +11,7 @@ from app.models.bolao import (
     BolaoGuessStatus,
 )
 from app.models.giveaway import parse_datetime, serialize_datetime, utc_now
+from app.repositories.postgres_database import PostgresConnectionAdapter
 
 
 class BolaoRepositoryProtocol(Protocol):
@@ -53,14 +51,8 @@ class BolaoRepositoryProtocol(Protocol):
     ) -> list[BolaoGuess]: ...
 
 
-class SQLiteBolaoRepository:
-    """Persistencia SQLite para boloes e palpites."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
+class _BolaoRepositoryImplementation:
+    """Persistencia PostgreSQL para boloes e palpites."""
 
     async def create_event(self, event: BolaoEventCreate) -> BolaoEvent:
         return await asyncio.to_thread(self._create_event_sync, event)
@@ -118,15 +110,6 @@ class SQLiteBolaoRepository:
             score_team_1,
             score_team_2,
         )
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        return connection
 
     def _initialize_schema(self) -> None:
         with self._lock:
@@ -419,9 +402,9 @@ class SQLiteBolaoRepository:
 
     @staticmethod
     def _get_event_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         bolao_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT
@@ -445,10 +428,10 @@ class SQLiteBolaoRepository:
 
     @staticmethod
     def _get_guess_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         bolao_id: int,
         user_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT
@@ -465,7 +448,7 @@ class SQLiteBolaoRepository:
         ).fetchone()
 
     @staticmethod
-    def _row_to_event(row: sqlite3.Row) -> BolaoEvent:
+    def _row_to_event(row: dict[str, Any]) -> BolaoEvent:
         return BolaoEvent(
             id=int(row["id"]),
             title=str(row["title"]),
@@ -486,7 +469,7 @@ class SQLiteBolaoRepository:
         )
 
     @staticmethod
-    def _row_to_guess(row: sqlite3.Row) -> BolaoGuess:
+    def _row_to_guess(row: dict[str, Any]) -> BolaoGuess:
         return BolaoGuess(
             id=int(row["id"]),
             bolao_id=int(row["bolao_id"]),

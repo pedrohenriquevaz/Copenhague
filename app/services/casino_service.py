@@ -20,7 +20,7 @@ from app.models.casino import (
 )
 from app.models.economy import EconomyTransaction, EconomyTransactionType, UserWallet
 from app.models.guild_settings import GuildEconomySettings
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.services.economy_limits import (
     PROFIT_DIFFICULTY_ROLL_MAX,
     apply_daily_casino_profit_cap,
@@ -69,7 +69,7 @@ class CasinoService:
 
     def __init__(
         self,
-        repository: SQLiteEconomyRepository,
+        repository: EconomyRepositoryProtocol,
         *,
         progress_service: GameProgressService | None = None,
         rng: random.Random | random.SystemRandom | None = None,
@@ -1070,7 +1070,7 @@ class CasinoService:
             [
                 transaction.amount
                 for transaction in transactions
-            if transaction.type is EconomyTransactionType.CASINO_PAYOUT
+                if transaction.type is EconomyTransactionType.CASINO_PAYOUT
                 and transaction.metadata.get("outcome")
                 in {
                     CasinoOutcome.WON.value,

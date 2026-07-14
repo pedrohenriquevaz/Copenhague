@@ -176,9 +176,7 @@ def _draw_card(
     draw.rounded_rectangle(box, radius=8, outline="#d8d1ec", width=2)
 
     color = (
-        RED_SUIT
-        if card.suit in {CardSuit.HEARTS, CardSuit.DIAMONDS}
-        else BLACK_SUIT
+        RED_SUIT if card.suit in {CardSuit.HEARTS, CardSuit.DIAMONDS} else BLACK_SUIT
     )
     draw.text((x + 10, y + 8), card.display, font=_font(24, bold=True), fill=color)
     _draw_suit(draw, card.suit, (x + CARD_WIDTH // 2, y + 62), 17, color)

@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import re
 import selectors
-import sqlite3
 import sys
 import threading
 from collections.abc import Sequence
 from concurrent.futures import Future
 from typing import Any
+
+from app.repositories.errors import RepositoryIntegrityError
 
 try:
     from psycopg import errors, sql
@@ -191,7 +192,7 @@ class PostgresDatabase:
 
 
 class PostgresConnectionAdapter:
-    """Minimal sqlite3-compatible connection facade over a pooled PG connection."""
+    """Fachada sincrona sobre o pool assincrono PostgreSQL."""
 
     def __init__(self, database: PostgresDatabase) -> None:
         self._database = database
@@ -226,7 +227,7 @@ class PostgresConnectionAdapter:
         if pragma_cursor is not None:
             return pragma_cursor
 
-        translated = _translate_sqlite_query(query)
+        translated = _normalize_repository_query(query)
         translated, captures_lastrowid = _add_returning_id_if_needed(translated)
         translated = _add_row_lock_if_needed(translated)
         try:
@@ -240,7 +241,7 @@ class PostgresConnectionAdapter:
             )
         except errors.IntegrityError as exc:  # type: ignore[union-attr]
             self.rollback()
-            raise sqlite3.IntegrityError(str(exc)) from exc
+            raise RepositoryIntegrityError(str(exc)) from exc
 
     def executemany(
         self,
@@ -362,7 +363,7 @@ class PostgresCursorAdapter:
         return list(self._database._run_coro(self._cursor.fetchall()))
 
 
-def _translate_sqlite_query(query: str) -> str:
+def _normalize_repository_query(query: str) -> str:
     normalized = " ".join(query.strip().split())
     upper = normalized.upper()
     if upper == "BEGIN IMMEDIATE":

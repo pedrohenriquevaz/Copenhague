@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-import threading
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 
 from app.models.activity import ActivityStats, NativeVoiceSession
@@ -44,10 +41,12 @@ from app.models.shop import (
     ShopPurchaseStatus,
     StockMode,
 )
+from app.repositories.errors import RepositoryIntegrityError
+from app.repositories.postgres_database import PostgresConnectionAdapter
 
 
-class SQLiteEconomyRepository:
-    """Persistencia SQLite para economia, atividade, loja e auditoria."""
+class _EconomyRepositoryImplementation:
+    """Persistencia PostgreSQL para economia, atividade, loja e auditoria."""
 
     CREDIT_CASHBACK_LOW_STREAK = 4
     CREDIT_CASHBACK_HIGH_STREAK = 5
@@ -55,12 +54,6 @@ class SQLiteEconomyRepository:
     CREDIT_CASHBACK_HIGH_PERCENT = 80
     SAVINGS_MAX_DEPOSIT_PERCENT = 70
     SAVINGS_LOCK_DAYS = 1
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
 
     async def get_guild_settings(self, guild_id: int) -> GuildEconomySettings:
         return await asyncio.to_thread(self._get_or_create_settings_sync, guild_id)
@@ -555,15 +548,6 @@ class SQLiteEconomyRepository:
             user_id,
             level,
         )
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        return connection
 
     def _initialize_schema(self) -> None:
         with self._lock:
@@ -3195,7 +3179,7 @@ class SQLiteEconomyRepository:
                             now,
                         ),
                     )
-                except sqlite3.IntegrityError:
+                except RepositoryIntegrityError:
                     connection.rollback()
                     return LevelUpgradeResult(
                         status=LevelUpgradeStatus.ALREADY_OWNED,
@@ -3232,9 +3216,9 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _get_settings_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -3246,9 +3230,9 @@ class SQLiteEconomyRepository:
 
     def _ensure_settings(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
-    ) -> sqlite3.Row:
+    ) -> dict[str, Any]:
         row = self._get_settings_row(connection, guild_id)
         if row is not None:
             return row
@@ -3268,7 +3252,7 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _ensure_column(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         table: str,
         column: str,
         definition: str,
@@ -3280,10 +3264,10 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _get_wallet_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -3295,10 +3279,10 @@ class SQLiteEconomyRepository:
 
     def _ensure_wallet(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row:
+    ) -> dict[str, Any]:
         row = self._get_wallet_row(connection, guild_id, user_id)
         if row is not None:
             return row
@@ -3322,10 +3306,10 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _get_savings_account_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -3337,10 +3321,10 @@ class SQLiteEconomyRepository:
 
     def _ensure_savings_account(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row:
+    ) -> dict[str, Any]:
         row = self._get_savings_account_row(connection, guild_id, user_id)
         if row is not None:
             return row
@@ -3365,8 +3349,8 @@ class SQLiteEconomyRepository:
 
     def _apply_savings_interest(
         self,
-        connection: sqlite3.Connection,
-        account_row: sqlite3.Row,
+        connection: PostgresConnectionAdapter,
+        account_row: dict[str, Any],
         daily_interest_bps: int,
     ) -> int:
         balance = int(account_row["balance"])
@@ -3429,8 +3413,8 @@ class SQLiteEconomyRepository:
 
     def _build_savings_overview(
         self,
-        wallet_row: sqlite3.Row,
-        account_row: sqlite3.Row,
+        wallet_row: dict[str, Any],
+        account_row: dict[str, Any],
         daily_interest_bps: int,
         interest_applied: int,
     ) -> SavingsOverview:
@@ -3449,10 +3433,10 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _get_credit_protection_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -3464,10 +3448,10 @@ class SQLiteEconomyRepository:
 
     def _ensure_credit_protection_state(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row:
+    ) -> dict[str, Any]:
         row = self._get_credit_protection_row(connection, guild_id, user_id)
         if row is not None:
             return row
@@ -3492,10 +3476,10 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _get_cursor_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -3507,10 +3491,10 @@ class SQLiteEconomyRepository:
 
     def _ensure_cursor(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
-    ) -> sqlite3.Row:
+    ) -> dict[str, Any]:
         row = self._get_cursor_row(connection, guild_id, user_id)
         if row is not None:
             return row
@@ -3529,11 +3513,11 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _get_reward_claim_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
         reward_key: str,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT last_claim_date, claim_count
@@ -3547,7 +3531,7 @@ class SQLiteEconomyRepository:
 
     def _insert_reward_claim(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         *,
         guild_id: int,
         user_id: int,
@@ -3571,7 +3555,7 @@ class SQLiteEconomyRepository:
 
     def _update_reward_claim(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         *,
         guild_id: int,
         user_id: int,
@@ -3602,7 +3586,7 @@ class SQLiteEconomyRepository:
 
     def _upsert_reward_claim(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         *,
         guild_id: int,
         user_id: int,
@@ -3633,7 +3617,7 @@ class SQLiteEconomyRepository:
 
     @staticmethod
     def _has_achievement_reward_transaction(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
         achievement_key: str,
@@ -3659,7 +3643,7 @@ class SQLiteEconomyRepository:
 
     def _insert_transaction(
         self,
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         *,
         guild_id: int,
         user_id: int,
@@ -3715,7 +3699,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_settings(row: sqlite3.Row) -> GuildEconomySettings:
+    def _row_to_settings(row: dict[str, Any]) -> GuildEconomySettings:
         return GuildEconomySettings(
             guild_id=int(row["guild_id"]),
             currency_name=str(row["currency_name"]),
@@ -3753,9 +3737,7 @@ class SQLiteEconomyRepository:
             casino_min_bet_duel=int(row["casino_min_bet_duel"]),
             casino_min_bet_blackjack=int(row["casino_min_bet_blackjack"]),
             casino_min_bet_scratch_card=int(row["casino_min_bet_scratch_card"]),
-            casino_min_bet_collective_race=int(
-                row["casino_min_bet_collective_race"]
-            ),
+            casino_min_bet_collective_race=int(row["casino_min_bet_collective_race"]),
             casino_min_bet_match_bet=int(row["casino_min_bet_match_bet"]),
             casino_min_bet_truco=int(row["casino_min_bet_truco"]),
             casino_limiters_enabled=bool(row["casino_limiters_enabled"]),
@@ -3770,7 +3752,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_wallet(row: sqlite3.Row) -> UserWallet:
+    def _row_to_wallet(row: dict[str, Any]) -> UserWallet:
         return UserWallet(
             guild_id=int(row["guild_id"]),
             user_id=int(row["user_id"]),
@@ -3782,7 +3764,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_credit_protection_state(row: sqlite3.Row) -> CreditProtectionState:
+    def _row_to_credit_protection_state(row: dict[str, Any]) -> CreditProtectionState:
         return CreditProtectionState(
             guild_id=int(row["guild_id"]),
             user_id=int(row["user_id"]),
@@ -3792,7 +3774,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_savings_account(row: sqlite3.Row) -> SavingsAccount:
+    def _row_to_savings_account(row: dict[str, Any]) -> SavingsAccount:
         return SavingsAccount(
             guild_id=int(row["guild_id"]),
             user_id=int(row["user_id"]),
@@ -3808,7 +3790,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_transaction(row: sqlite3.Row) -> EconomyTransaction:
+    def _row_to_transaction(row: dict[str, Any]) -> EconomyTransaction:
         return EconomyTransaction(
             id=int(row["id"]),
             guild_id=int(row["guild_id"]),
@@ -3824,7 +3806,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_cursor(row: sqlite3.Row) -> ActivityClaimCursor:
+    def _row_to_cursor(row: dict[str, Any]) -> ActivityClaimCursor:
         return ActivityClaimCursor(
             guild_id=int(row["guild_id"]),
             user_id=int(row["user_id"]),
@@ -3841,7 +3823,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_voice_session(row: sqlite3.Row) -> NativeVoiceSession:
+    def _row_to_voice_session(row: dict[str, Any]) -> NativeVoiceSession:
         return NativeVoiceSession(
             id=int(row["id"]),
             guild_id=int(row["guild_id"]),
@@ -3867,7 +3849,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_reward(row: sqlite3.Row) -> RewardItem:
+    def _row_to_reward(row: dict[str, Any]) -> RewardItem:
         return RewardItem(
             id=int(row["id"]),
             guild_id=int(row["guild_id"]),
@@ -3891,9 +3873,7 @@ class SQLiteEconomyRepository:
                 else None
             ),
             duration_days=(
-                int(row["duration_days"])
-                if row["duration_days"] is not None
-                else None
+                int(row["duration_days"]) if row["duration_days"] is not None else None
             ),
             is_active=bool(row["is_active"]),
             created_by=int(row["created_by"]),
@@ -3907,7 +3887,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_purchase(row: sqlite3.Row) -> RewardPurchase:
+    def _row_to_purchase(row: dict[str, Any]) -> RewardPurchase:
         return RewardPurchase(
             id=int(row["id"]),
             guild_id=int(row["guild_id"]),
@@ -3931,7 +3911,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_level_config(row: sqlite3.Row) -> LevelConfig:
+    def _row_to_level_config(row: dict[str, Any]) -> LevelConfig:
         return LevelConfig(
             guild_id=int(row["guild_id"]),
             level=int(row["level"]),
@@ -3945,7 +3925,7 @@ class SQLiteEconomyRepository:
         )
 
     @staticmethod
-    def _row_to_level_purchase(row: sqlite3.Row) -> LevelUpgradePurchase:
+    def _row_to_level_purchase(row: dict[str, Any]) -> LevelUpgradePurchase:
         return LevelUpgradePurchase(
             id=int(row["id"]),
             guild_id=int(row["guild_id"]),

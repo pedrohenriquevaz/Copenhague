@@ -132,14 +132,10 @@ def build_profile_badges(
 
     badges: list[ProfileBadge] = []
     ranking_position = _ranking_position(wallet.user_id, top_wallets)
-    achievement_keys = {
-        item.achievement.achievement_key for item in achievements
-    }
+    achievement_keys = {item.achievement.achievement_key for item in achievements}
 
     if ranking_position == 1 and wallet.balance > 0:
-        badges.append(
-            ProfileBadge("💰", "Magnata", "Usuário mais rico do servidor.")
-        )
+        badges.append(ProfileBadge("💰", "Magnata", "Usuário mais rico do servidor."))
     elif ranking_position in {2, 3}:
         badges.append(
             ProfileBadge(
@@ -343,8 +339,7 @@ def build_ranking_embed(
     sections = ["**Top 3**\n" + "\n".join(top_lines)]
     if rest_lines:
         sections.append(
-            "**Demais posições**\n"
-            + _format_embed_lines(rest_lines, limit=2500)
+            "**Demais posições**\n" + _format_embed_lines(rest_lines, limit=2500)
         )
     embed.description = "\n\n".join(sections)
     return embed
@@ -525,11 +520,7 @@ def build_shop_embed(
 
     lines = []
     for reward in rewards:
-        item_name = (
-            f"#{reward.id} · {reward.name}"
-            if show_reward_ids
-            else reward.name
-        )
+        item_name = f"#{reward.id} · {reward.name}" if show_reward_ids else reward.name
         details = " · ".join(
             [
                 format_points(reward.price, settings.currency_name),
@@ -537,9 +528,7 @@ def build_shop_embed(
                 _format_reward_duration(reward.duration_days),
             ]
         )
-        lines.append(
-            f"{_reward_icon(reward)} **{item_name}** — {details}"
-        )
+        lines.append(f"{_reward_icon(reward)} **{item_name}** — {details}")
     sections = []
     if lines:
         reward_lines = _format_embed_lines(lines, limit=2600, separator="\n\n")
@@ -907,8 +896,7 @@ def _format_profile_badges(badges: list[ProfileBadge]) -> str:
     if not badges:
         return "Nenhum pin ativo ainda."
     lines = [
-        f"{badge.emoji} **{badge.name}** — {badge.description}"
-        for badge in badges
+        f"{badge.emoji} **{badge.name}** — {badge.description}" for badge in badges
     ]
     return _format_embed_lines(lines, limit=1000)
 
@@ -946,10 +934,7 @@ def _format_profile_achievements(
         reverse=True,
     )[:6]
     lines = [
-        (
-            f"{item.achievement.badge_emoji or '🏷️'} "
-            f"**{item.achievement.name}**"
-        )
+        (f"{item.achievement.badge_emoji or '🏷️'} " f"**{item.achievement.name}**")
         for item in highlighted
     ]
     remaining = len(achievements) - len(highlighted)

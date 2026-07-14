@@ -14,7 +14,7 @@ from app.models.casino import (
 )
 from app.models.economy import EconomyTransactionType
 from app.models.guild_settings import GuildEconomySettings
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.services.economy_limits import (
     apply_daily_casino_profit_cap,
     current_daily_profit_window_start,
@@ -39,7 +39,7 @@ class BlackjackService:
 
     def __init__(
         self,
-        repository: SQLiteEconomyRepository,
+        repository: EconomyRepositoryProtocol,
         *,
         progress_service: GameProgressService | None = None,
         deck_factory: Callable[[], list[BlackjackCard]] | None = None,
@@ -386,13 +386,9 @@ class BlackjackService:
     @classmethod
     def _validate_bet(cls, bet: int, min_bet: int, max_bet: int) -> None:
         if bet < min_bet:
-            raise BlackjackValidationError(
-                f"A aposta mínima e de {min_bet} ponto(s)."
-            )
+            raise BlackjackValidationError(f"A aposta mínima e de {min_bet} ponto(s).")
         if bet > max_bet:
-            raise BlackjackValidationError(
-                f"A aposta máxima e de {max_bet} ponto(s)."
-            )
+            raise BlackjackValidationError(f"A aposta máxima e de {max_bet} ponto(s).")
 
     async def _validate_daily_profit_limit(
         self,

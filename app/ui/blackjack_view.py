@@ -110,9 +110,7 @@ def build_blackjack_embed(
             inline=True,
         )
 
-    embed.set_footer(
-        text="Banca para em soft 17 · BlackJack natural paga 2,5x"
-    )
+    embed.set_footer(text="Banca para em soft 17 · BlackJack natural paga 2,5x")
     return embed
 
 

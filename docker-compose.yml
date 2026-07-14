@@ -45,10 +45,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - type: bind
-        source: ./data
-        target: /app/data
     stop_grace_period: 30s
     logging:
       driver: json-file

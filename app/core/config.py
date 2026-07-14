@@ -4,7 +4,6 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -17,20 +16,18 @@ class Settings:
     GUILD_IDS: tuple[int, ...]
     ENVIRONMENT: str
     LOG_LEVEL: str
-    DATABASE_BACKEND: str
+    NETWORK_LOG_LEVEL: str
+    ENABLE_NETWORK_ACCESS_LOG: bool
+    DISCORD_INTERACTION_ACK_SECONDS: float
+    HTTP_CONNECT_TIMEOUT_SECONDS: float
+    HTTP_REQUEST_TIMEOUT_SECONDS: float
+    HTTP_MAX_RETRIES: int
     POSTGRES_DSN: str
     POSTGRES_SCHEMA: str
     POSTGRES_POOL_MIN_SIZE: int
     POSTGRES_POOL_MAX_SIZE: int
-    GAME_PROGRESS_DB_BACKEND: str
     ENABLE_MEMBERS_INTENT: bool
     ENABLE_MESSAGE_CONTENT_INTENT: bool
-    GIVEAWAY_DB_PATH: str
-    BOLAO_DB_PATH: str
-    MATCH_BET_DB_PATH: str
-    GAME_PROGRESS_DB_PATH: str
-    FORM_DB_PATH: str
-    ECONOMY_DB_PATH: str
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -47,7 +44,18 @@ class Settings:
             GUILD_IDS=guild_ids,
             ENVIRONMENT=env.get("ENVIRONMENT", "development"),
             LOG_LEVEL=env.get("LOG_LEVEL", "INFO").upper(),
-            DATABASE_BACKEND=env.get("DATABASE_BACKEND", "sqlite").strip().lower(),
+            NETWORK_LOG_LEVEL=env.get("NETWORK_LOG_LEVEL", "INFO").upper(),
+            ENABLE_NETWORK_ACCESS_LOG=_get_bool(env, "ENABLE_NETWORK_ACCESS_LOG", True),
+            DISCORD_INTERACTION_ACK_SECONDS=_get_positive_float(
+                env, "DISCORD_INTERACTION_ACK_SECONDS", 2.5
+            ),
+            HTTP_CONNECT_TIMEOUT_SECONDS=_get_positive_float(
+                env, "HTTP_CONNECT_TIMEOUT_SECONDS", 3.0
+            ),
+            HTTP_REQUEST_TIMEOUT_SECONDS=_get_positive_float(
+                env, "HTTP_REQUEST_TIMEOUT_SECONDS", 15.0
+            ),
+            HTTP_MAX_RETRIES=max(0, int(env.get("HTTP_MAX_RETRIES", "2"))),
             POSTGRES_DSN=env.get(
                 "POSTGRES_DSN",
                 "postgresql://copenhague:copenhague@postgres:5432/copenhague",
@@ -61,41 +69,11 @@ class Settings:
                 1,
                 int(env.get("POSTGRES_POOL_MAX_SIZE", "10")),
             ),
-            GAME_PROGRESS_DB_BACKEND=env.get(
-                "GAME_PROGRESS_DB_BACKEND",
-                env.get("DATABASE_BACKEND", "sqlite"),
-            )
-            .strip()
-            .lower(),
             ENABLE_MEMBERS_INTENT=_get_bool(env, "ENABLE_MEMBERS_INTENT", False),
             ENABLE_MESSAGE_CONTENT_INTENT=_get_bool(
                 env,
                 "ENABLE_MESSAGE_CONTENT_INTENT",
                 False,
-            ),
-            GIVEAWAY_DB_PATH=env.get(
-                "GIVEAWAY_DB_PATH",
-                str(Path("data") / "giveaways.sqlite3"),
-            ),
-            BOLAO_DB_PATH=env.get(
-                "BOLAO_DB_PATH",
-                str(Path("data") / "bot.db"),
-            ),
-            MATCH_BET_DB_PATH=env.get(
-                "MATCH_BET_DB_PATH",
-                str(Path("data") / "bot.db"),
-            ),
-            GAME_PROGRESS_DB_PATH=env.get(
-                "GAME_PROGRESS_DB_PATH",
-                str(Path("data") / "bot.db"),
-            ),
-            FORM_DB_PATH=env.get(
-                "FORM_DB_PATH",
-                str(Path("data") / "bot.db"),
-            ),
-            ECONOMY_DB_PATH=env.get(
-                "ECONOMY_DB_PATH",
-                str(Path("data") / "economy.sqlite3"),
             ),
         )
 
@@ -117,6 +95,17 @@ def _get_bool(
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _get_positive_float(
+    environ: Mapping[str, str],
+    key: str,
+    default: float,
+) -> float:
+    value = float(environ.get(key, str(default)))
+    if value <= 0:
+        raise ValueError(f"{key} precisa ser maior que zero.")
+    return value
+
+
 def _get_guild_ids(environ: Mapping[str, str]) -> tuple[int, ...]:
     """Retorna servidores usados somente para sincronizacao rapida de comandos."""
     raw = environ.get("GUILD_IDS", "").strip()
@@ -128,5 +117,7 @@ def _get_guild_ids(environ: Mapping[str, str]) -> tuple[int, ...]:
 
     guild_ids = tuple(dict.fromkeys(int(value.strip()) for value in raw.split(",")))
     if any(guild_id <= 0 for guild_id in guild_ids):
-        raise ValueError("GUILD_IDS deve conter apenas IDs positivos separados por virgula.")
+        raise ValueError(
+            "GUILD_IDS deve conter apenas IDs positivos separados por virgula."
+        )
     return guild_ids

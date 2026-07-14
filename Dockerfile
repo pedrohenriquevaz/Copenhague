@@ -18,6 +18,4 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /app/data
-
-CMD ["python", "bot.py"]
+CMD ["sh", "-lc", "python -m scripts.db_manage --postgres-dsn \"$POSTGRES_DSN\" --schema \"$POSTGRES_SCHEMA\" upgrade && python bot.py"]

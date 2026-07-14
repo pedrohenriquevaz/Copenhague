@@ -12,7 +12,7 @@ from app.models.game_progress import (
     SeasonalTheme,
 )
 from app.models.guild_settings import GuildEconomySettings
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.services.economy_limits import (
     PROFIT_DIFFICULTY_ROLL_MAX,
     apply_daily_casino_profit_cap,
@@ -89,7 +89,7 @@ class ScratchCardService:
 
     def __init__(
         self,
-        economy_repository: SQLiteEconomyRepository,
+        economy_repository: EconomyRepositoryProtocol,
         progress_service: GameProgressService,
         *,
         rng: random.Random | random.SystemRandom | None = None,

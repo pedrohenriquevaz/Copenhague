@@ -266,8 +266,7 @@ class TrucoRoundReveal:
             round_number=int(data["round_number"]),
             hand_value=int(data.get("hand_value", 1)),
             cards=[
-                TrucoPlayedCard.from_dict(played)
-                for played in data.get("cards", [])
+                TrucoPlayedCard.from_dict(played) for played in data.get("cards", [])
             ],
             winner=(
                 TrucoTeam(str(data["winner"]))
@@ -514,9 +513,7 @@ class TrucoSession:
                 TrucoPlayedCard.from_dict(played)
                 for played in data.get("played_cards", [])
             ],
-            last_round_reveal=TrucoRoundReveal.from_dict(
-                data.get("last_round_reveal")
-            ),
+            last_round_reveal=TrucoRoundReveal.from_dict(data.get("last_round_reveal")),
             round_reveal_pending=bool(data.get("round_reveal_pending", False)),
             pending_challenge=TrucoChallenge.from_dict(data.get("pending_challenge")),
             is_escurona=bool(data.get("is_escurona", False)),

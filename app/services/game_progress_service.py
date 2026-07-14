@@ -10,7 +10,7 @@ from app.models.game_progress import (
     UserGameAchievement,
 )
 from app.models.giveaway import utc_now
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.game_progress_repository import GameProgressRepositoryProtocol
 
 
@@ -289,7 +289,7 @@ class GameProgressService:
     def __init__(
         self,
         repository: GameProgressRepositoryProtocol,
-        economy_repository: SQLiteEconomyRepository,
+        economy_repository: EconomyRepositoryProtocol,
     ) -> None:
         self._repository = repository
         self._economy_repository = economy_repository

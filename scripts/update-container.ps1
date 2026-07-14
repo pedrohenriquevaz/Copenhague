@@ -14,10 +14,6 @@ if (-not (Test-Path -LiteralPath ".env")) {
     throw "Arquivo .env nao encontrado. Crie uma copia de .env.example e preencha DISCORD_TOKEN."
 }
 
-if (-not (Test-Path -LiteralPath "data")) {
-    New-Item -ItemType Directory -Path "data" | Out-Null
-}
-
 if ($PullGit) {
     git pull --ff-only
 }

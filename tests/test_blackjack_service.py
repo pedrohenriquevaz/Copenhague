@@ -17,7 +17,6 @@ from app.models.casino import (
 )
 from app.models.economy import EconomyTransactionType
 from app.models.guild_settings import GuildEconomySettings
-from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.services.blackjack_service import (
     BlackjackService,
     BlackjackValidationError,
@@ -28,6 +27,7 @@ from app.ui.blackjack_table_image import (
     render_blackjack_table_image,
 )
 from app.ui.blackjack_view import BlackjackView, build_blackjack_embed
+from tests.postgres_support import PostgresEconomyRepository
 
 
 def card(rank: CardRank, suit: CardSuit = CardSuit.SPADES) -> BlackjackCard:
@@ -171,7 +171,7 @@ def test_blackjack_view_exposes_visual_buttons() -> None:
 
 
 async def test_blackjack_natural_pays_two_and_half_times(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = BlackjackService(
         repository,
@@ -197,7 +197,7 @@ async def test_blackjack_natural_pays_two_and_half_times(tmp_path: Path) -> None
 async def test_blackjack_double_down_debits_extra_bet_and_pays_win(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = BlackjackService(
         repository,
@@ -225,7 +225,7 @@ async def test_blackjack_double_down_debits_extra_bet_and_pays_win(
 async def test_blackjack_win_streak_bonus_multiplies_profit(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     decks = [
         [
@@ -266,7 +266,7 @@ async def test_blackjack_win_streak_bonus_multiplies_profit(
 async def test_blackjack_blocks_duplicate_and_insufficient_balance(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=50)
     service = BlackjackService(
         repository,
@@ -287,7 +287,7 @@ async def test_blackjack_blocks_duplicate_and_insufficient_balance(
 
 
 async def test_blackjack_uses_configured_min_bet(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await repository.update_guild_settings(1, {"casino_min_bet_blackjack": 75})
     await _seed_wallet(repository, balance=1000)
     service = BlackjackService(
@@ -305,7 +305,7 @@ async def test_blackjack_uses_configured_min_bet(tmp_path: Path) -> None:
 
 
 async def _seed_wallet(
-    repository: SQLiteEconomyRepository,
+    repository: PostgresEconomyRepository,
     *,
     balance: int,
 ) -> None:

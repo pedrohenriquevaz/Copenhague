@@ -16,8 +16,6 @@ from app.models.uno import (
     UnoSession,
     UnoValue,
 )
-from app.repositories.economy_repository import SQLiteEconomyRepository
-from app.repositories.uno_repository import SQLiteUnoRepository
 from app.services.economy_service import EconomyService
 from app.services.uno_service import UnoService, UnoValidationError
 from app.ui.uno_table_image import render_uno_table_image
@@ -29,6 +27,7 @@ from app.ui.uno_view import (
     _register_uno_hand,
     refresh_open_uno_hands,
 )
+from tests.postgres_support import PostgresEconomyRepository, PostgresUnoRepository
 
 
 def test_uno_deck_has_standard_108_cards() -> None:
@@ -39,14 +38,15 @@ def test_uno_deck_has_standard_108_cards() -> None:
     assert sum(card.value is UnoValue.WILD for card in deck) == 4
     assert sum(card.value is UnoValue.WILD_DRAW_FOUR for card in deck) == 4
     for color in UnoColor:
-        assert sum(
-            card.color is color and card.value is UnoValue.ZERO for card in deck
-        ) == 1
+        assert (
+            sum(card.color is color and card.value is UnoValue.ZERO for card in deck)
+            == 1
+        )
 
 
 async def test_uno_lobby_join_and_start_deals_private_hands(tmp_path) -> None:
-    repository = SQLiteUnoRepository(tmp_path / "uno.sqlite3")
-    economy_repository = SQLiteEconomyRepository(tmp_path / "uno.sqlite3")
+    repository = PostgresUnoRepository(tmp_path / "uno.pg")
+    economy_repository = PostgresEconomyRepository(tmp_path / "uno.pg")
     economy = EconomyService(economy_repository)
     for user_id in (100, 200):
         await economy.give_points(
@@ -231,15 +231,15 @@ async def test_uno_finishes_when_player_uses_last_card(tmp_path) -> None:
     assert session.status is UnoGameStatus.FINISHED
     assert session.winner_user_id == 100
     assert session.players[0].hand == []
-    economy = EconomyService(SQLiteEconomyRepository(tmp_path / "uno.sqlite3"))
+    economy = EconomyService(PostgresEconomyRepository(tmp_path / "uno.pg"))
     assert (await economy.get_wallet(1, 100)).balance == 1150
     assert (await economy.get_wallet(1, 200)).balance == 900
 
 
 async def test_uno_pve_pays_two_times_stake_to_human_winner(tmp_path) -> None:
-    database = tmp_path / "uno.sqlite3"
-    repository = SQLiteUnoRepository(database)
-    economy_repository = SQLiteEconomyRepository(database)
+    database = tmp_path / "uno.pg"
+    repository = PostgresUnoRepository(database)
+    economy_repository = PostgresEconomyRepository(database)
     economy = EconomyService(economy_repository)
     await economy.give_points(
         guild_id=1,
@@ -274,9 +274,9 @@ async def test_uno_pve_pays_two_times_stake_to_human_winner(tmp_path) -> None:
 
 
 async def test_uno_machine_plays_without_reading_human_hand(tmp_path) -> None:
-    database = tmp_path / "uno.sqlite3"
-    repository = SQLiteUnoRepository(database)
-    economy_repository = SQLiteEconomyRepository(database)
+    database = tmp_path / "uno.pg"
+    repository = PostgresUnoRepository(database)
+    economy_repository = PostgresEconomyRepository(database)
     economy = EconomyService(economy_repository)
     await economy.give_points(
         guild_id=1,
@@ -404,8 +404,8 @@ async def test_uno_ephemeral_hand_uses_interaction_edit_route() -> None:
 
 
 async def _started_game(tmp_path):
-    repository = SQLiteUnoRepository(tmp_path / "uno.sqlite3")
-    economy_repository = SQLiteEconomyRepository(tmp_path / "uno.sqlite3")
+    repository = PostgresUnoRepository(tmp_path / "uno.pg")
+    economy_repository = PostgresEconomyRepository(tmp_path / "uno.pg")
     economy = EconomyService(economy_repository)
     for user_id in (100, 200):
         await economy.give_points(

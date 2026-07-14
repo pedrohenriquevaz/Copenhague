@@ -7,8 +7,6 @@ import pytest
 from app.models.casino import RaceMascot
 from app.models.economy import EconomyTransactionType
 from app.models.game_progress import CollectiveRaceBetStatus
-from app.repositories.economy_repository import SQLiteEconomyRepository
-from app.repositories.game_progress_repository import SQLiteGameProgressRepository
 from app.services.collective_race_service import (
     CollectiveRaceService,
     CollectiveRaceValidationError,
@@ -19,6 +17,10 @@ from app.services.scratch_card_service import (
     SCRATCH_DAILY_PURCHASE_LIMIT,
     ScratchCardService,
     ScratchCardValidationError,
+)
+from tests.postgres_support import (
+    PostgresEconomyRepository,
+    PostgresGameProgressRepository,
 )
 
 
@@ -46,8 +48,8 @@ class FixedRng:
 async def test_scratch_card_pays_winning_line_and_unlocks_achievement(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = ScratchCardService(
         economy,
@@ -84,8 +86,8 @@ async def test_scratch_card_pays_winning_line_and_unlocks_achievement(
 async def test_scratch_card_jackpot_accumulates_and_can_be_claimed(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = ScratchCardService(
         economy,
@@ -106,8 +108,8 @@ async def test_scratch_card_jackpot_accumulates_and_can_be_claimed(
 async def test_scratch_card_diamond_win_gate_can_turn_line_into_loss(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = ScratchCardService(
         economy,
@@ -139,9 +141,9 @@ async def test_scratch_card_diamond_win_gate_can_turn_line_into_loss(
 async def test_scratch_card_profit_pressure_reduces_win_gate(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
     await economy.update_guild_settings(1, {"casino_daily_profit_limit": 5000})
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = ScratchCardService(
         economy,
@@ -191,8 +193,8 @@ async def test_scratch_card_profit_pressure_reduces_win_gate(
 async def test_scratch_card_limits_daily_purchases_per_user(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = ScratchCardService(
         economy,
@@ -221,9 +223,9 @@ async def test_scratch_card_limits_daily_purchases_per_user(
 async def test_scratch_card_daily_purchase_limit_can_be_disabled(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
     await economy.update_guild_settings(1, {"casino_limiters_enabled": 0})
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = ScratchCardService(
         economy,
@@ -247,9 +249,9 @@ async def test_scratch_card_daily_purchase_limit_can_be_disabled(
 async def test_scratch_card_uses_configured_min_bet(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
     await economy.update_guild_settings(1, {"casino_min_bet_scratch_card": 100})
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = ScratchCardService(economy, progress, rng=FixedRng())
     await _seed_wallet(economy, balance=1000)
@@ -259,8 +261,8 @@ async def test_scratch_card_uses_configured_min_bet(
 
 
 async def test_collective_race_pays_winners_and_marks_losers(tmp_path: Path) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = CollectiveRaceService(progress_repository, economy, progress)
     await _seed_wallet(economy, user_id=10, balance=1000)
@@ -291,8 +293,8 @@ async def test_collective_race_pays_winners_and_marks_losers(tmp_path: Path) -> 
 
 
 async def test_collective_race_cancel_refunds_bets(tmp_path: Path) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = CollectiveRaceService(progress_repository, economy, progress)
     await _seed_wallet(economy, balance=1000)
@@ -314,9 +316,9 @@ async def test_collective_race_cancel_refunds_bets(tmp_path: Path) -> None:
 
 
 async def test_collective_race_uses_configured_min_bet(tmp_path: Path) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
     await economy.update_guild_settings(1, {"casino_min_bet_collective_race": 150})
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = CollectiveRaceService(progress_repository, economy, progress)
 
@@ -330,8 +332,8 @@ async def test_collective_race_uses_configured_min_bet(tmp_path: Path) -> None:
 
 
 async def test_game_progress_admin_summary(tmp_path: Path) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = CollectiveRaceService(progress_repository, economy, progress)
     await _seed_wallet(economy, balance=1000)
@@ -356,8 +358,8 @@ async def test_game_progress_admin_summary(tmp_path: Path) -> None:
 async def test_game_progress_reset_user_profile_clears_user_data(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     service = CollectiveRaceService(progress_repository, economy, progress)
     await _seed_wallet(economy, balance=1000)
@@ -398,8 +400,8 @@ async def test_default_achievements_include_gradual_rewards() -> None:
 async def test_configure_achievement_reward_persists_after_default_sync(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
 
     await progress.ensure_default_achievements(1)
@@ -417,8 +419,8 @@ async def test_configure_achievement_reward_persists_after_default_sync(
 async def test_game_progress_unlocks_milestones_from_transactions(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
     await _seed_wallet(economy, balance=6000)
     await economy.mutate_balance(
@@ -451,8 +453,8 @@ async def test_game_progress_unlocks_milestones_from_transactions(
 async def test_list_user_achievements_pays_unpaid_existing_reward_once(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
 
     await progress.ensure_default_achievements(1)
@@ -471,9 +473,7 @@ async def test_list_user_achievements_pays_unpaid_existing_reward_once(
     await progress.list_user_achievements(1, 10)
     wallet_after_second_list = await economy.get_wallet(1, 10)
 
-    assert {item.achievement.achievement_key for item in achievements} >= {
-        "first_bet"
-    }
+    assert {item.achievement.achievement_key for item in achievements} >= {"first_bet"}
     assert wallet_after_first_list.balance == 25
     assert wallet_after_second_list.balance == 25
 
@@ -481,8 +481,8 @@ async def test_list_user_achievements_pays_unpaid_existing_reward_once(
 async def test_list_user_achievements_does_not_double_pay_old_reward_transaction(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    progress_repository = SQLiteGameProgressRepository(tmp_path / "progress.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
     progress = GameProgressService(progress_repository, economy)
 
     await progress.ensure_default_achievements(1)
@@ -504,7 +504,7 @@ async def test_list_user_achievements_does_not_double_pay_old_reward_transaction
 
 
 async def _seed_wallet(
-    repository: SQLiteEconomyRepository,
+    repository: PostgresEconomyRepository,
     *,
     user_id: int = 10,
     balance: int,

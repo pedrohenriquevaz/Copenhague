@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gc
-import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -29,7 +28,6 @@ from app.models.shop import (
     ShopPurchaseStatus,
     StockMode,
 )
-from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.services.activity_service import ActivityService
 from app.services.casino_service import CasinoService
 from app.services.economy_service import EconomyService, EconomyValidationError
@@ -42,14 +40,15 @@ from app.utils.embeds import (
     build_profile_embed,
     build_shop_embed,
 )
+from tests.postgres_support import PostgresEconomyRepository
 
 
 async def test_economy_admin_points_and_history() -> None:
-    db_path = Path("tests") / "tmp_economy.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_economy.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         economy = EconomyService(repository)
 
         given = await economy.give_points(
@@ -78,15 +77,15 @@ async def test_economy_admin_points_and_history() -> None:
         repository = None
         economy = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_economy_bulk_give_points_grants_unique_users() -> None:
-    db_path = Path("tests") / "tmp_economy_bulk.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_economy_bulk.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         economy = EconomyService(repository)
 
         results = await economy.give_points_bulk(
@@ -110,15 +109,15 @@ async def test_economy_bulk_give_points_grants_unique_users() -> None:
         repository = None
         economy = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_user_transfer_debits_sender_and_credits_receiver() -> None:
-    db_path = Path("tests") / "tmp_economy_transfer.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_economy_transfer.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         economy = EconomyService(repository)
         await economy.give_points(
             guild_id=1,
@@ -166,13 +165,13 @@ async def test_user_transfer_debits_sender_and_credits_receiver() -> None:
         repository = None
         economy = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_reset_user_profile_clears_economy_activity_and_shop(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "reset_economy.sqlite3")
+    repository = PostgresEconomyRepository(tmp_path / "reset_economy.pg")
     economy = EconomyService(repository)
     activity = ActivityService(repository)
     shop = ShopService(repository)
@@ -278,11 +277,11 @@ async def test_reset_user_profile_clears_economy_activity_and_shop(
 
 
 async def test_bot_panel_rewards_are_limited() -> None:
-    db_path = Path("tests") / "tmp_bot_panel_rewards.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_bot_panel_rewards.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         economy = EconomyService(repository)
 
         starter = await economy.claim_starter_pack(guild_id=1, user_id=10)
@@ -310,15 +309,15 @@ async def test_bot_panel_rewards_are_limited() -> None:
         repository = None
         economy = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_economy_config_and_admin_summary() -> None:
-    db_path = Path("tests") / "tmp_economy_admin_summary.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_economy_admin_summary.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         economy = EconomyService(repository)
 
         settings = await economy.configure_settings(
@@ -397,11 +396,11 @@ async def test_economy_config_and_admin_summary() -> None:
         repository = None
         economy = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_economy_config_rejects_min_bet_above_max(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     economy = EconomyService(repository)
 
     with pytest.raises(EconomyValidationError, match="maior que o limite maximo"):
@@ -414,8 +413,8 @@ async def test_economy_config_rejects_min_bet_above_max(tmp_path: Path) -> None:
 
 
 async def test_savings_deposit_lock_interest_and_withdraw(tmp_path: Path) -> None:
-    db_path = tmp_path / "savings.sqlite3"
-    repository = SQLiteEconomyRepository(db_path)
+    db_path = tmp_path / "savings.pg"
+    repository = PostgresEconomyRepository(db_path)
     economy = EconomyService(repository)
     await economy.configure_settings(
         guild_id=1,
@@ -442,7 +441,7 @@ async def test_savings_deposit_lock_interest_and_withdraw(tmp_path: Path) -> Non
     with pytest.raises(EconomyValidationError, match="bloqueada"):
         await economy.withdraw_savings(guild_id=1, user_id=10, amount=1)
 
-    with sqlite3.connect(db_path) as connection:
+    with repository._connect() as connection:
         connection.execute(
             """
             UPDATE user_savings_accounts
@@ -473,11 +472,11 @@ async def test_savings_deposit_lock_interest_and_withdraw(tmp_path: Path) -> Non
 
 
 async def test_activity_conversion_uses_delta_only() -> None:
-    db_path = Path("tests") / "tmp_activity.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_activity.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         activity = ActivityService(repository)
         economy = EconomyService(repository)
 
@@ -495,10 +494,10 @@ async def test_activity_conversion_uses_delta_only() -> None:
             channel_id=200,
             is_bot=False,
         )
-        with sqlite3.connect(db_path) as connection:
+        with repository._connect() as connection:
             connection.execute("""
                 UPDATE native_voice_sessions
-                SET started_at = datetime('now', '-2 minutes')
+                SET started_at = (CURRENT_TIMESTAMP - INTERVAL '2 minutes')::text
                 WHERE guild_id = 1 AND user_id = 10
                 """)
         await activity.close_voice_sessions(guild_id=1, user_id=10, is_bot=False)
@@ -519,15 +518,15 @@ async def test_activity_conversion_uses_delta_only() -> None:
         activity = None
         economy = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_activity_conversion_counts_open_voice_session() -> None:
-    db_path = Path("tests") / "tmp_activity_open.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_activity_open.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         activity = ActivityService(repository)
 
         await activity.start_voice_session(
@@ -542,10 +541,10 @@ async def test_activity_conversion_counts_open_voice_session() -> None:
             channel_id=200,
             is_bot=False,
         )
-        with sqlite3.connect(db_path) as connection:
+        with repository._connect() as connection:
             connection.execute("""
                 UPDATE native_voice_sessions
-                SET started_at = datetime('now', '-2 minutes')
+                SET started_at = (CURRENT_TIMESTAMP - INTERVAL '2 minutes')::text
                 WHERE guild_id = 1 AND user_id = 10
                 """)
             sessions = connection.execute("""
@@ -557,7 +556,7 @@ async def test_activity_conversion_counts_open_voice_session() -> None:
         result = await activity.convert_activity(guild_id=1, user_id=10)
 
         assert sessions is not None
-        assert int(sessions[0]) == 1
+        assert int(sessions["total"]) == 1
         assert result.voice_seconds_delta >= 120
         assert result.voice_points >= 4
         assert result.total_points >= result.voice_points
@@ -565,7 +564,7 @@ async def test_activity_conversion_counts_open_voice_session() -> None:
         repository = None
         activity = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_voice_activity_does_not_count_muted_microphones() -> None:
@@ -612,11 +611,11 @@ async def test_voice_activity_does_not_count_muted_microphones() -> None:
 
 
 async def test_shop_purchase_debits_wallet_and_stock() -> None:
-    db_path = Path("tests") / "tmp_shop.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_shop.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         economy = EconomyService(repository)
         shop = ShopService(repository)
 
@@ -667,13 +666,13 @@ async def test_shop_purchase_debits_wallet_and_stock() -> None:
         economy = None
         shop = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_credit_protection_cashback_consumes_saves_and_resets_on_win(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "credit_protection.sqlite3")
+    repository = PostgresEconomyRepository(tmp_path / "credit_protection.pg")
     economy = EconomyService(repository)
     casino = CasinoService(
         repository,
@@ -766,7 +765,7 @@ async def test_credit_protection_cashback_consumes_saves_and_resets_on_win(
 
 
 async def test_credit_saves_remove_rejects_negative_balance(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "credit_saves.sqlite3")
+    repository = PostgresEconomyRepository(tmp_path / "credit_saves.pg")
     economy = EconomyService(repository)
 
     added = await economy.add_credit_saves(
@@ -798,7 +797,7 @@ async def test_credit_saves_remove_rejects_negative_balance(tmp_path: Path) -> N
 
 
 async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "level_upgrades.sqlite3")
+    repository = PostgresEconomyRepository(tmp_path / "level_upgrades.pg")
     economy = EconomyService(repository)
     shop = ShopService(repository)
 
@@ -894,11 +893,11 @@ async def test_shop_level_upgrade_debits_wallet_once(tmp_path: Path) -> None:
 
 
 async def test_shop_reward_update_and_remove() -> None:
-    db_path = Path("tests") / "tmp_shop_update.sqlite3"
-    _cleanup_sqlite(db_path)
+    db_path = Path("tests") / "tmp_shop_update.pg"
+    _cleanup_database_files(db_path)
 
     try:
-        repository = SQLiteEconomyRepository(db_path)
+        repository = PostgresEconomyRepository(db_path)
         shop = ShopService(repository)
 
         reward = await shop.create_reward(
@@ -969,7 +968,7 @@ async def test_shop_reward_update_and_remove() -> None:
         repository = None
         shop = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
@@ -1061,8 +1060,7 @@ def test_shop_embed_layout_hides_type_and_formats_stock() -> None:
     assert "Escolha uma recompensa no menu abaixo" in embed.description
     assert "🎭 **VIP Plus** — 17.000 pontos · Esgotado · 7 dias" in embed.description
     assert (
-        "🎁 **Passe Semanal** — 8.000 pontos · 10 un. · Permanente"
-        in embed.description
+        "🎁 **Passe Semanal** — 8.000 pontos · 10 un. · Permanente" in embed.description
     )
     assert "#3" not in embed.description
     assert "#1" not in embed.description
@@ -1284,7 +1282,7 @@ def _voice_member(
     )
 
 
-def _cleanup_sqlite(db_path: Path) -> None:
+def _cleanup_database_files(db_path: Path) -> None:
     if db_path.exists():
         for _ in range(5):
             try:

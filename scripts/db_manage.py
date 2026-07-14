@@ -3,12 +3,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
-import sqlite3
 import sys
-import zipfile
-from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,58 +20,51 @@ except ModuleNotFoundError:  # pragma: no cover - reported at command runtime.
 
 DEFAULT_POSTGRES_DSN = "postgresql://copenhague:copenhague@127.0.0.1:5432/copenhague"
 DEFAULT_SCHEMA = "copenhague"
-DEFAULT_CHUNK_SIZE = 500
 MIGRATIONS_DIR = Path("sql/postgres/migrations")
 
 
 @dataclass(frozen=True, slots=True)
 class TableSpec:
     name: str
-    env_var: str
-    default_path: str
     serial: bool = False
-
-    @property
-    def path(self) -> Path:
-        return Path(os.getenv(self.env_var, self.default_path))
 
 
 TABLE_MANIFEST: tuple[TableSpec, ...] = (
-    TableSpec("guild_settings", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("user_wallets", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("user_savings_accounts", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("user_credit_protection", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("activity_claim_cursors", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("economy_reward_claims", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("economy_transactions", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("shop_level_configs", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("user_level_upgrades", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("native_message_stats", "ECONOMY_DB_PATH", "data/economy.sqlite3"),
-    TableSpec("native_voice_sessions", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("reward_items", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("reward_purchases", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("reward_codes", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("truco_games", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("truco_actions", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("uno_games", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("uno_actions", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("admin_audit_logs", "ECONOMY_DB_PATH", "data/economy.sqlite3", True),
-    TableSpec("game_achievements", "GAME_PROGRESS_DB_PATH", "data/bot.db", True),
-    TableSpec("user_game_achievements", "GAME_PROGRESS_DB_PATH", "data/bot.db"),
-    TableSpec("game_jackpots", "GAME_PROGRESS_DB_PATH", "data/bot.db"),
-    TableSpec("game_seasonal_settings", "GAME_PROGRESS_DB_PATH", "data/bot.db"),
-    TableSpec("collective_races", "GAME_PROGRESS_DB_PATH", "data/bot.db", True),
-    TableSpec("collective_race_bets", "GAME_PROGRESS_DB_PATH", "data/bot.db", True),
-    TableSpec("match_bet_matches", "MATCH_BET_DB_PATH", "data/bot.db", True),
-    TableSpec("match_bet_tickets", "MATCH_BET_DB_PATH", "data/bot.db", True),
-    TableSpec("bolao_events", "BOLAO_DB_PATH", "data/bot.db", True),
-    TableSpec("bolao_guesses", "BOLAO_DB_PATH", "data/bot.db", True),
-    TableSpec("forms", "FORM_DB_PATH", "data/bot.db", True),
-    TableSpec("form_responses", "FORM_DB_PATH", "data/bot.db", True),
-    TableSpec("giveaway_events", "GIVEAWAY_DB_PATH", "data/giveaways.sqlite3", True),
-    TableSpec("giveaway_codes", "GIVEAWAY_DB_PATH", "data/giveaways.sqlite3", True),
-    TableSpec("giveaway_claims", "GIVEAWAY_DB_PATH", "data/giveaways.sqlite3", True),
-    TableSpec("giveaway_user_tickets", "GIVEAWAY_DB_PATH", "data/giveaways.sqlite3"),
+    TableSpec("guild_settings"),
+    TableSpec("user_wallets"),
+    TableSpec("user_savings_accounts"),
+    TableSpec("user_credit_protection"),
+    TableSpec("activity_claim_cursors"),
+    TableSpec("economy_reward_claims"),
+    TableSpec("economy_transactions", True),
+    TableSpec("shop_level_configs"),
+    TableSpec("user_level_upgrades", True),
+    TableSpec("native_message_stats"),
+    TableSpec("native_voice_sessions", True),
+    TableSpec("reward_items", True),
+    TableSpec("reward_purchases", True),
+    TableSpec("reward_codes", True),
+    TableSpec("truco_games", True),
+    TableSpec("truco_actions", True),
+    TableSpec("uno_games", True),
+    TableSpec("uno_actions", True),
+    TableSpec("admin_audit_logs", True),
+    TableSpec("game_achievements", True),
+    TableSpec("user_game_achievements"),
+    TableSpec("game_jackpots"),
+    TableSpec("game_seasonal_settings"),
+    TableSpec("collective_races", True),
+    TableSpec("collective_race_bets", True),
+    TableSpec("match_bet_matches", True),
+    TableSpec("match_bet_tickets", True),
+    TableSpec("bolao_events", True),
+    TableSpec("bolao_guesses", True),
+    TableSpec("forms", True),
+    TableSpec("form_responses", True),
+    TableSpec("giveaway_events", True),
+    TableSpec("giveaway_codes", True),
+    TableSpec("giveaway_claims", True),
+    TableSpec("giveaway_user_tickets"),
 )
 
 
@@ -96,8 +85,6 @@ def main() -> int:
             return command_upgrade(args)
         if args.command == "validate":
             return command_validate(args)
-        if args.command == "migrate-sqlite":
-            return command_migrate_sqlite(args)
     except SystemExit:
         raise
     except Exception as exc:
@@ -108,7 +95,7 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Gerencia schema e migracao PostgreSQL do bot Copenhague.",
+        description="Gerencia o schema PostgreSQL do bot Copenhague.",
     )
     parser.add_argument(
         "--postgres-dsn",
@@ -126,37 +113,6 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("upgrade", help="Aplica migrations pendentes.")
     subparsers.add_parser("validate", help="Valida tabelas, indices e sequencias.")
 
-    migrate = subparsers.add_parser(
-        "migrate-sqlite",
-        help="Copia dados SQLite para Postgres com validacao de contagens.",
-    )
-    migrate.add_argument(
-        "--replace",
-        action="store_true",
-        help="Remove e recria o schema antes de migrar.",
-    )
-    migrate.add_argument(
-        "--no-backup",
-        action="store_true",
-        help="Nao cria ZIP dos arquivos SQLite antes da migracao.",
-    )
-    migrate.add_argument(
-        "--backup-dir",
-        type=Path,
-        default=Path("backups"),
-        help="Diretorio para o ZIP de backup SQLite.",
-    )
-    migrate.add_argument(
-        "--chunk-size",
-        type=int,
-        default=DEFAULT_CHUNK_SIZE,
-        help="Linhas copiadas por lote.",
-    )
-    migrate.add_argument(
-        "--skip-schema-refresh",
-        action="store_true",
-        help="Nao inicializa os schemas SQLite antes da copia.",
-    )
     return parser.parse_args()
 
 
@@ -172,9 +128,7 @@ def command_status(args: argparse.Namespace) -> int:
         else:
             print("Nenhuma migration aplicada.")
         pending = [
-            migration.name
-            for migration in migrations
-            if migration.name not in applied
+            migration.name for migration in migrations if migration.name not in applied
         ]
         if pending:
             print("Pendentes:")
@@ -196,35 +150,6 @@ def command_validate(args: argparse.Namespace) -> int:
     with connect(args.postgres_dsn, args.schema) as connection:
         validate_schema(connection)
     print(f"Schema `{args.schema}` validado com sucesso.")
-    return 0
-
-
-def command_migrate_sqlite(args: argparse.Namespace) -> int:
-    if args.chunk_size <= 0:
-        raise SystemExit("--chunk-size precisa ser maior que zero.")
-
-    with connect(args.postgres_dsn, args.schema) as connection:
-        health_check(connection)
-
-    if not args.skip_schema_refresh:
-        refresh_sqlite_schemas()
-
-    existing_sources = existing_sqlite_sources()
-    if not existing_sources:
-        raise SystemExit("Nenhum arquivo SQLite encontrado para migrar.")
-
-    if not args.no_backup:
-        backup_path = backup_sqlite_files(existing_sources, args.backup_dir)
-        print(f"Backup SQLite criado em: {backup_path}")
-
-    with connect(args.postgres_dsn, args.schema, replace=args.replace) as connection:
-        apply_migrations(connection)
-        copy_manifest_data(connection, args.chunk_size)
-        reset_sequences(connection)
-        validate_schema(connection)
-        validate_row_counts(connection)
-
-    print("Migracao SQLite -> Postgres concluida com contagens conferidas.")
     return 0
 
 
@@ -286,15 +211,13 @@ def health_check(connection: Any) -> None:
 
 def ensure_migrations_table(connection: Any) -> None:
     with connection.cursor() as cursor:
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version TEXT PRIMARY KEY,
                 checksum TEXT NOT NULL,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
-            """
-        )
+            """)
     connection.commit()
 
 
@@ -329,175 +252,6 @@ def apply_migrations(connection: Any) -> None:
                 (migration.name, migration.checksum),
             )
             print(f"Migration aplicada: {migration.name}")
-    connection.commit()
-
-
-def refresh_sqlite_schemas() -> None:
-    from app.repositories.bolao_repository import SQLiteBolaoRepository
-    from app.repositories.economy_repository import SQLiteEconomyRepository
-    from app.repositories.form_repository import SQLiteFormRepository
-    from app.repositories.game_progress_repository import SQLiteGameProgressRepository
-    from app.repositories.giveaway_repository import SQLiteGiveawayRepository
-    from app.repositories.match_bet_repository import SQLiteMatchBetRepository
-    from app.repositories.truco_repository import SQLiteTrucoRepository
-    from app.repositories.uno_repository import SQLiteUnoRepository
-
-    factories = (
-        (
-            Path(os.getenv("ECONOMY_DB_PATH", "data/economy.sqlite3")),
-            SQLiteEconomyRepository,
-        ),
-        (Path(os.getenv("BOLAO_DB_PATH", "data/bot.db")), SQLiteBolaoRepository),
-        (Path(os.getenv("MATCH_BET_DB_PATH", "data/bot.db")), SQLiteMatchBetRepository),
-        (
-            Path(os.getenv("ECONOMY_DB_PATH", "data/economy.sqlite3")),
-            SQLiteTrucoRepository,
-        ),
-        (
-            Path(os.getenv("ECONOMY_DB_PATH", "data/economy.sqlite3")),
-            SQLiteUnoRepository,
-        ),
-        (
-            Path(os.getenv("GAME_PROGRESS_DB_PATH", "data/bot.db")),
-            SQLiteGameProgressRepository,
-        ),
-        (Path(os.getenv("FORM_DB_PATH", "data/bot.db")), SQLiteFormRepository),
-        (
-            Path(os.getenv("GIVEAWAY_DB_PATH", "data/giveaways.sqlite3")),
-            SQLiteGiveawayRepository,
-        ),
-    )
-    for path, factory in factories:
-        if path.exists():
-            factory(path)
-
-
-def existing_sqlite_sources() -> list[Path]:
-    paths: dict[Path, Path] = {}
-    for table in TABLE_MANIFEST:
-        path = table.path
-        if path.exists():
-            paths[path.resolve()] = path
-    return list(paths.values())
-
-
-def backup_sqlite_files(paths: Sequence[Path], backup_dir: Path) -> Path:
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_path = backup_dir / f"sqlite-before-postgres-{timestamp}.zip"
-    cwd = Path.cwd().resolve()
-    with zipfile.ZipFile(backup_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for db_path in paths:
-            for file_path in sqlite_related_files(db_path):
-                archive.write(file_path, arcname=archive_name(file_path, cwd))
-    return backup_path
-
-
-def sqlite_related_files(db_path: Path) -> Iterable[Path]:
-    yield from (
-        candidate
-        for candidate in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm"))
-        if candidate.exists()
-    )
-
-
-def archive_name(path: Path, cwd: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(cwd)).replace("\\", "/")
-    except ValueError:
-        return path.name
-
-
-def copy_manifest_data(connection: Any, chunk_size: int) -> None:
-    for table in TABLE_MANIFEST:
-        copied = copy_table(connection, table, chunk_size)
-        print(f"{table.name}: {copied} linha(s) copiadas.")
-    connection.commit()
-
-
-def copy_table(connection: Any, table: TableSpec, chunk_size: int) -> int:
-    if not table.path.exists() or not sqlite_table_exists(table.path, table.name):
-        return 0
-    with sqlite3.connect(table.path) as sqlite_connection:
-        sqlite_connection.row_factory = sqlite3.Row
-        columns = sqlite_columns(sqlite_connection, table.name)
-        if not columns:
-            return 0
-        selected_columns = ", ".join(quote_sqlite_identifier(c) for c in columns)
-        select_sql = (
-            f"SELECT {selected_columns} "
-            f"FROM {quote_sqlite_identifier(table.name)}"
-        )
-        rows = sqlite_connection.execute(select_sql)
-        inserted = 0
-        while True:
-            batch = rows.fetchmany(chunk_size)
-            if not batch:
-                break
-            insert_rows(connection, table.name, columns, batch)
-            inserted += len(batch)
-        return inserted
-
-
-def sqlite_table_exists(path: Path, table_name: str) -> bool:
-    with sqlite3.connect(path) as connection:
-        row = connection.execute(
-            """
-            SELECT 1
-            FROM sqlite_master
-            WHERE type = 'table' AND name = ?
-            """,
-            (table_name,),
-        ).fetchone()
-    return row is not None
-
-
-def sqlite_columns(connection: sqlite3.Connection, table_name: str) -> list[str]:
-    rows = connection.execute(
-        f"PRAGMA table_info({quote_sqlite_identifier(table_name)})"
-    ).fetchall()
-    return [str(row["name"]) for row in rows]
-
-
-def quote_sqlite_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def insert_rows(
-    connection: Any,
-    table_name: str,
-    columns: Sequence[str],
-    rows: Sequence[sqlite3.Row],
-) -> None:
-    values = [tuple(row[column] for column in columns) for row in rows]
-    placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in columns)
-    statement = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
-        sql.Identifier(table_name),
-        sql.SQL(", ").join(sql.Identifier(column) for column in columns),
-        placeholders,
-    )
-    with connection.cursor() as cursor:
-        cursor.executemany(statement, values)
-
-
-def reset_sequences(connection: Any) -> None:
-    with connection.cursor() as cursor:
-        for table in TABLE_MANIFEST:
-            if not table.serial:
-                continue
-            cursor.execute(
-                sql.SQL(
-                    """
-                    SELECT setval(
-                        pg_get_serial_sequence(%s, 'id'),
-                        GREATEST(COALESCE(MAX(id), 0), 1),
-                        COALESCE(MAX(id), 0) > 0
-                    )
-                    FROM {}
-                    """
-                ).format(sql.Identifier(table.name)),
-                (table.name,),
-            )
     connection.commit()
 
 
@@ -599,33 +353,6 @@ def validate_sequences(connection: Any) -> None:
             cursor.execute("SELECT pg_get_serial_sequence(%s, 'id')", (table.name,))
             if cursor.fetchone()[0] is None:
                 raise RuntimeError(f"Sequence ausente para {table.name}.id")
-
-
-def validate_row_counts(connection: Any) -> None:
-    divergences: list[str] = []
-    with connection.cursor() as cursor:
-        for table in TABLE_MANIFEST:
-            sqlite_count = sqlite_row_count(table)
-            cursor.execute(
-                sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table.name))
-            )
-            postgres_count = int(cursor.fetchone()[0])
-            if sqlite_count != postgres_count:
-                divergences.append(
-                    f"{table.name}: sqlite={sqlite_count}, postgres={postgres_count}"
-                )
-    if divergences:
-        raise RuntimeError("Divergencia de contagens: " + "; ".join(divergences))
-
-
-def sqlite_row_count(table: TableSpec) -> int:
-    if not table.path.exists() or not sqlite_table_exists(table.path, table.name):
-        return 0
-    with sqlite3.connect(table.path) as connection:
-        row = connection.execute(
-            f"SELECT COUNT(*) FROM {quote_sqlite_identifier(table.name)}"
-        ).fetchone()
-    return int(row[0])
 
 
 if __name__ == "__main__":

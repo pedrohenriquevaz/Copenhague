@@ -11,7 +11,7 @@ from app.models.shop import (
     ShopPurchaseResult,
     StockMode,
 )
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 
 
 class ShopServiceError(Exception):
@@ -25,7 +25,7 @@ class ShopValidationError(ShopServiceError):
 class ShopService:
     """Regras de recompensas e compras."""
 
-    def __init__(self, repository: SQLiteEconomyRepository) -> None:
+    def __init__(self, repository: EconomyRepositoryProtocol) -> None:
         self._repository = repository
 
     async def create_reward(

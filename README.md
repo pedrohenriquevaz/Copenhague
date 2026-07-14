@@ -1,6 +1,6 @@
 # Discord Bot Copenhague
 
-Bot de Discord em Python com `discord.py`, Slash Commands, SQLite e uma
+Bot de Discord em Python com `discord.py`, Slash Commands, PostgreSQL e uma
 arquitetura organizada por cogs, services, repositories, models e UI.
 
 O bot atende uma comunidade com economia de pontos, loja, cassino social,
@@ -16,7 +16,7 @@ administracao.
 - Views persistentes para paineis, loja, giveaways, formularios, bets e eventos.
 - Logs estruturados de inicializacao, cogs e sincronizacao.
 - Prefixo legado `cp!` apenas para comandos operacionais antigos.
-- Persistencia SQLite local com schemas criados pelos repositories.
+- Persistencia exclusiva em PostgreSQL com migrations versionadas.
 
 ### Painel do bot
 
@@ -190,16 +190,9 @@ Formularios:
 
 ## Persistencia
 
-O bot usa SQLite. Os caminhos sao configuraveis por variaveis de ambiente:
-
-- `GIVEAWAY_DB_PATH`
-- `BOLAO_DB_PATH`
-- `MATCH_BET_DB_PATH`
-- `GAME_PROGRESS_DB_PATH`
-- `FORM_DB_PATH`
-- `ECONOMY_DB_PATH`
-
-Por padrao, os bancos ficam em `data/`.
+O bot usa exclusivamente PostgreSQL. O schema, o DSN e o pool de conexoes sao
+configurados pelas variaveis `POSTGRES_SCHEMA`, `POSTGRES_DSN`,
+`POSTGRES_POOL_MIN_SIZE` e `POSTGRES_POOL_MAX_SIZE`.
 
 ## Configuracao local
 
@@ -210,12 +203,13 @@ DISCORD_TOKEN=seu-token
 GUILD_IDS=id-servidor-teste-1,id-servidor-teste-2
 ENVIRONMENT=development
 LOG_LEVEL=INFO
-GIVEAWAY_DB_PATH=data/giveaways.sqlite3
-BOLAO_DB_PATH=data/bot.db
-MATCH_BET_DB_PATH=data/bot.db
-GAME_PROGRESS_DB_PATH=data/bot.db
-FORM_DB_PATH=data/bot.db
-ECONOMY_DB_PATH=data/economy.sqlite3
+NETWORK_LOG_LEVEL=INFO
+ENABLE_NETWORK_ACCESS_LOG=true
+HTTP_CONNECT_TIMEOUT_SECONDS=3
+HTTP_REQUEST_TIMEOUT_SECONDS=15
+HTTP_MAX_RETRIES=2
+POSTGRES_DSN=postgresql://copenhague:copenhague@postgres:5432/copenhague
+POSTGRES_SCHEMA=copenhague
 ENABLE_MEMBERS_INTENT=false
 ENABLE_MESSAGE_CONTENT_INTENT=false
 ```
@@ -239,8 +233,9 @@ docker compose up -d --build
 docker compose logs -f --tail=100 discord-bot
 ```
 
-O `docker-compose.yml` monta `./data:/app/data`, preservando os bancos SQLite
-entre reinicios e rebuilds.
+O volume nomeado `postgres-data` preserva o banco entre reinicios e rebuilds.
+Antes de iniciar o bot, o contêiner aplica automaticamente as migrations
+PostgreSQL pendentes.
 
 Para atualizar a imagem localmente no Windows:
 
@@ -248,18 +243,18 @@ Para atualizar a imagem localmente no Windows:
 .\scripts\update-container.ps1
 ```
 
-Para criar backup dos bancos antes de atualizar:
+Para criar backup do PostgreSQL antes de atualizar:
 
 ```powershell
-.\scripts\backup-data.ps1
+.\scripts\backup-postgres.ps1
 ```
 
 Veja o guia completo em `docs/containerizacao.md`.
 
 ## Checklist de deploy
 
-1. Criar `.env` com token real e caminhos de banco.
-2. Confirmar que `data/` esta persistido em volume.
+1. Criar `.env` com token real e DSN PostgreSQL.
+2. Confirmar que o volume `postgres-data` esta persistido.
 3. Convidar o bot com escopos `bot` e `applications.commands`.
 4. Habilitar intents necessarios no Developer Portal.
 5. Em homologacao, definir `GUILD_IDS` para sincronizacao rapida. Em producao,
@@ -268,7 +263,7 @@ Veja o guia completo em `docs/containerizacao.md`.
 7. Testar `/admin_panel`, `/admin_analytics` e `/economy_status`.
 8. Publicar `/anuncio_bot`, `/economy_panel_setup` e `/embed_loja`.
 9. Reiniciar o bot e testar botoes persistentes.
-10. Fazer backup periodico de `data/*.sqlite3` e `data/*.db`.
+10. Fazer backups periodicos com `backup-postgres.ps1`.
 
 ## Qualidade
 
@@ -283,15 +278,15 @@ python -m black --check .
 ```text
 app/
   cogs/          # Slash commands e eventos Discord
-  core/          # bot, config e logging
+  core/          # bot, config, logging e composicao de dependencias
+  integrations/  # HTTP, timeouts, erros e logs de rede
   models/        # dataclasses e enums de dominio
   providers/     # providers de atividade
-  repositories/  # SQLite e transacoes
+  repositories/  # PostgreSQL, protocols e transacoes
   services/      # regras de negocio
   ui/            # views, botoes, selects e modals
   utils/         # embeds, permissoes e helpers
 tests/
-data/
 bot.py
 Dockerfile
 docker-compose.yml

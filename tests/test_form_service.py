@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from app.models.form import FormQuestionType, FormSubmitStatus
-from app.repositories.form_repository import SQLiteFormRepository
 from app.services.form_service import FormService, FormValidationError
+from tests.postgres_support import PostgresFormRepository
 
 
 def test_form_service_parses_dynamic_questions() -> None:
@@ -38,12 +38,12 @@ def test_form_service_validates_dynamic_questions() -> None:
 
 
 async def test_form_service_creates_publishes_and_submits_response() -> None:
-    db_path = Path("tests") / "tmp_forms.sqlite3"
+    db_path = Path("tests") / "tmp_forms.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteFormRepository(db_path)
+        repository = PostgresFormRepository(db_path)
         service = FormService(repository)
 
         form = await service.create_form(
@@ -88,16 +88,16 @@ async def test_form_service_creates_publishes_and_submits_response() -> None:
         repository = None
         service = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_form_service_closes_form() -> None:
-    db_path = Path("tests") / "tmp_forms_close.sqlite3"
+    db_path = Path("tests") / "tmp_forms_close.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteFormRepository(db_path)
+        repository = PostgresFormRepository(db_path)
         service = FormService(repository)
 
         form = await service.create_form(
@@ -119,10 +119,10 @@ async def test_form_service_closes_form() -> None:
         repository = None
         service = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
-def _cleanup_sqlite(db_path: Path) -> None:
+def _cleanup_database_files(db_path: Path) -> None:
     if db_path.exists():
         db_path.unlink()
     for suffix in ("-wal", "-shm"):

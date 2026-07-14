@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-import threading
-from pathlib import Path
 from typing import Any, Protocol
 
 from app.models.giveaway import serialize_datetime, utc_now
@@ -48,22 +45,8 @@ class UnoRepositoryProtocol(Protocol):
     ) -> dict[str, int]: ...
 
 
-class SQLiteUnoRepository:
+class _UnoRepositoryImplementation:
     """Persistência das partidas multiplayer de UNO."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        return connection
 
     def _initialize_schema(self) -> None:
         with self._lock, self._connect() as connection:
@@ -275,13 +258,11 @@ class SQLiteUnoRepository:
 
     def _list_active_games_sync(self) -> list[UnoSession]:
         with self._lock, self._connect() as connection:
-            rows = connection.execute(
-                """
+            rows = connection.execute("""
                 SELECT * FROM uno_games
                 WHERE status IN ('LOBBY', 'PLAYING')
                 ORDER BY updated_at DESC
-                """
-            ).fetchall()
+                """).fetchall()
         return [self._row_to_game(row) for row in rows]
 
     def _record_action_sync(

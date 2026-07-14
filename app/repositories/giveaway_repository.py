@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-import sqlite3
-import threading
 from collections.abc import Sequence
 from dataclasses import replace
-from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.models.giveaway import (
     GiveawayClaim,
@@ -24,6 +21,7 @@ from app.models.giveaway import (
     serialize_datetime,
     utc_now,
 )
+from app.repositories.postgres_database import PostgresConnectionAdapter
 
 
 class GiveawayRepositoryProtocol(Protocol):
@@ -104,14 +102,8 @@ class GiveawayRepositoryProtocol(Protocol):
     async def finalize_event(self, event_id: int) -> GiveawayFinalizationResult: ...
 
 
-class SQLiteGiveawayRepository:
-    """Persistencia SQLite para eventos, codigos e resgates."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
+class _GiveawayRepositoryImplementation:
+    """Persistencia PostgreSQL para eventos, codigos e resgates."""
 
     async def create_event(
         self,
@@ -235,15 +227,6 @@ class SQLiteGiveawayRepository:
     async def finalize_event(self, event_id: int) -> GiveawayFinalizationResult:
         return await asyncio.to_thread(self._finalize_event_sync, event_id)
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        return connection
-
     def _initialize_schema(self) -> None:
         with self._lock:
             with self._connect() as connection:
@@ -292,11 +275,9 @@ class SQLiteGiveawayRepository:
                         FOREIGN KEY(event_id) REFERENCES giveaway_events(id)
                             ON DELETE CASCADE,
                         FOREIGN KEY(code_id) REFERENCES giveaway_codes(id)
-                            ON DELETE CASCADE,
-                        UNIQUE(event_id, user_id)
+                            ON DELETE CASCADE
                     )
                     """)
-                self._ensure_claims_allow_multiple_per_user(connection)
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS giveaway_user_tickets (
                         event_id INTEGER NOT NULL,
@@ -350,7 +331,7 @@ class SQLiteGiveawayRepository:
 
     @staticmethod
     def _ensure_column(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         table: str,
         column: str,
         definition: str,
@@ -360,65 +341,6 @@ class SQLiteGiveawayRepository:
             return
 
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-    @staticmethod
-    def _ensure_claims_allow_multiple_per_user(
-        connection: sqlite3.Connection,
-    ) -> None:
-        indexes = connection.execute("PRAGMA index_list(giveaway_claims)").fetchall()
-        has_user_unique = False
-        for index in indexes:
-            if not bool(index["unique"]):
-                continue
-
-            columns = connection.execute(
-                f"PRAGMA index_info({index['name']})"
-            ).fetchall()
-            column_names = [str(column["name"]) for column in columns]
-            if column_names == ["event_id", "user_id"]:
-                has_user_unique = True
-                break
-
-        if not has_user_unique:
-            return
-
-        connection.execute("ALTER TABLE giveaway_claims RENAME TO giveaway_claims_old")
-        connection.execute("""
-            CREATE TABLE giveaway_claims (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                code_id INTEGER NOT NULL UNIQUE,
-                claimed_at TEXT NOT NULL,
-                reward_amount INTEGER,
-                reward_name TEXT,
-                FOREIGN KEY(event_id) REFERENCES giveaway_events(id)
-                    ON DELETE CASCADE,
-                FOREIGN KEY(code_id) REFERENCES giveaway_codes(id)
-                    ON DELETE CASCADE
-            )
-            """)
-        connection.execute("""
-            INSERT INTO giveaway_claims (
-                id,
-                event_id,
-                user_id,
-                code_id,
-                claimed_at,
-                reward_amount,
-                reward_name
-            )
-            SELECT
-                id,
-                event_id,
-                user_id,
-                code_id,
-                claimed_at,
-                reward_amount,
-                reward_name
-            FROM giveaway_claims_old
-            """)
-        connection.execute("DROP TABLE giveaway_claims_old")
 
     def _create_event_sync(
         self,
@@ -897,9 +819,9 @@ class SQLiteGiveawayRepository:
 
     @staticmethod
     def _get_event_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         event_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT
@@ -1242,7 +1164,7 @@ class SQLiteGiveawayRepository:
         )
 
     @staticmethod
-    def _row_to_event(row: sqlite3.Row) -> GiveawayEvent:
+    def _row_to_event(row: dict[str, Any]) -> GiveawayEvent:
         return GiveawayEvent(
             id=int(row["id"]),
             title=str(row["title"]),
@@ -1278,7 +1200,7 @@ class SQLiteGiveawayRepository:
         )
 
     @staticmethod
-    def _row_to_claim(row: sqlite3.Row) -> GiveawayClaim:
+    def _row_to_claim(row: dict[str, Any]) -> GiveawayClaim:
         return GiveawayClaim(
             id=int(row["claim_id"]),
             event_id=int(row["event_id"]),
@@ -1295,7 +1217,7 @@ class SQLiteGiveawayRepository:
         )
 
     @staticmethod
-    def _row_to_code(row: sqlite3.Row) -> GiveawayCode:
+    def _row_to_code(row: dict[str, Any]) -> GiveawayCode:
         return GiveawayCode(
             id=int(row["id"]),
             event_id=int(row["event_id"]),

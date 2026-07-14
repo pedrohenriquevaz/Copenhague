@@ -17,7 +17,7 @@ from app.models.game_progress import (
 )
 from app.models.giveaway import utc_now
 from app.models.guild_settings import GuildEconomySettings
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.game_progress_repository import GameProgressRepositoryProtocol
 from app.services.economy_limits import (
     apply_daily_casino_profit_cap,
@@ -45,7 +45,7 @@ class CollectiveRaceService:
     def __init__(
         self,
         repository: GameProgressRepositoryProtocol,
-        economy_repository: SQLiteEconomyRepository,
+        economy_repository: EconomyRepositoryProtocol,
         progress_service: GameProgressService,
         *,
         rng: random.Random | random.SystemRandom | None = None,

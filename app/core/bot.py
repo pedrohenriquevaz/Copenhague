@@ -7,40 +7,9 @@ import discord
 from discord.ext import commands
 
 from app.core.config import get_settings
+from app.core.container import AppContainer
 from app.core.logger import setup_logging
-from app.repositories.bolao_repository import SQLiteBolaoRepository
-from app.repositories.economy_repository import SQLiteEconomyRepository
-from app.repositories.form_repository import SQLiteFormRepository
-from app.repositories.game_progress_repository import SQLiteGameProgressRepository
-from app.repositories.giveaway_repository import SQLiteGiveawayRepository
-from app.repositories.match_bet_repository import SQLiteMatchBetRepository
-from app.repositories.postgres_database import PostgresDatabase
-from app.repositories.postgres_repositories import (
-    PostgresBolaoRepository,
-    PostgresEconomyRepository,
-    PostgresFormRepository,
-    PostgresGameProgressRepository,
-    PostgresGiveawayRepository,
-    PostgresMatchBetRepository,
-    PostgresTrucoRepository,
-    PostgresUnoRepository,
-)
-from app.repositories.truco_repository import SQLiteTrucoRepository
-from app.repositories.uno_repository import SQLiteUnoRepository
-from app.services.activity_service import ActivityService
-from app.services.blackjack_service import BlackjackService
-from app.services.bolao_service import BolaoService
-from app.services.casino_service import CasinoService
-from app.services.collective_race_service import CollectiveRaceService
-from app.services.economy_service import EconomyService
-from app.services.form_service import FormService
-from app.services.game_progress_service import GameProgressService
-from app.services.giveaway_service import GiveawayService
-from app.services.match_bet_service import MatchBetService
-from app.services.scratch_card_service import ScratchCardService
-from app.services.shop_service import ShopService
-from app.services.truco_service import TrucoService
-from app.services.uno_service import UnoService
+from app.integrations import build_http_trace_config
 
 logger = logging.getLogger(__name__)
 
@@ -50,49 +19,10 @@ class DiscordBot(commands.Bot):
 
     def __init__(self) -> None:
         settings = get_settings()
+        setup_logging()
         self.settings = settings
-        self.postgres_database: PostgresDatabase | None = None
-        self._build_repositories(settings)
-        self.giveaway_service = GiveawayService(self.giveaway_repository)
-        self.bolao_service = BolaoService(self.bolao_repository)
-        self.form_service = FormService(self.form_repository)
-        self.economy_service = EconomyService(self.economy_repository)
-        self.game_progress_service = GameProgressService(
-            self.game_progress_repository,
-            self.economy_repository,
-        )
-        self.match_bet_service = MatchBetService(
-            self.match_bet_repository,
-            self.economy_repository,
-        )
-        self.truco_service = TrucoService(
-            self.truco_repository,
-            self.economy_repository,
-            progress_service=self.game_progress_service,
-        )
-        self.uno_service = UnoService(
-            self.uno_repository,
-            self.economy_repository,
-        )
-        self.activity_service = ActivityService(self.economy_repository)
-        self.shop_service = ShopService(self.economy_repository)
-        self.casino_service = CasinoService(
-            self.economy_repository,
-            progress_service=self.game_progress_service,
-        )
-        self.blackjack_service = BlackjackService(
-            self.economy_repository,
-            progress_service=self.game_progress_service,
-        )
-        self.scratch_card_service = ScratchCardService(
-            self.economy_repository,
-            self.game_progress_service,
-        )
-        self.collective_race_service = CollectiveRaceService(
-            self.game_progress_repository,
-            self.economy_repository,
-            self.game_progress_service,
-        )
+        self.container = AppContainer.build(settings)
+        self._expose_container_dependencies()
 
         intents = discord.Intents.default()
         intents.guilds = True
@@ -102,72 +32,28 @@ class DiscordBot(commands.Bot):
         intents.moderation = True
         intents.message_content = settings.ENABLE_MESSAGE_CONTENT_INTENT
 
+        http_trace = build_http_trace_config(enabled=settings.ENABLE_NETWORK_ACCESS_LOG)
         super().__init__(
             command_prefix="cp!",
             intents=intents,
             help_command=None,
+            http_trace=http_trace,
         )
 
-    def _build_repositories(self, settings) -> None:
-        if settings.DATABASE_BACKEND == "postgres":
-            self.postgres_database = self._create_postgres_database(settings)
-            self.giveaway_repository = PostgresGiveawayRepository(
-                self.postgres_database
-            )
-            self.bolao_repository = PostgresBolaoRepository(self.postgres_database)
-            self.match_bet_repository = PostgresMatchBetRepository(
-                self.postgres_database
-            )
-            self.truco_repository = PostgresTrucoRepository(self.postgres_database)
-            self.uno_repository = PostgresUnoRepository(self.postgres_database)
-            self.game_progress_repository = PostgresGameProgressRepository(
-                self.postgres_database
-            )
-            self.form_repository = PostgresFormRepository(self.postgres_database)
-            self.economy_repository = PostgresEconomyRepository(
-                self.postgres_database
-            )
-            logger.info(
-                "Runtime de persistencia: PostgreSQL "
-                "(economia, progressao, bets, bolao, Truco, UNO, "
-                "formularios e sorteios)."
-            )
-            return
+    def _expose_container_dependencies(self) -> None:
+        """Mantem a API esperada pelos cogs durante a reorganizacao interna."""
 
-        if settings.DATABASE_BACKEND != "sqlite":
-            raise ValueError("DATABASE_BACKEND precisa ser 'sqlite' ou 'postgres'.")
-
-        self.giveaway_repository = SQLiteGiveawayRepository(settings.GIVEAWAY_DB_PATH)
-        self.bolao_repository = SQLiteBolaoRepository(settings.BOLAO_DB_PATH)
-        self.match_bet_repository = SQLiteMatchBetRepository(settings.MATCH_BET_DB_PATH)
-        self.truco_repository = SQLiteTrucoRepository(settings.ECONOMY_DB_PATH)
-        self.uno_repository = SQLiteUnoRepository(settings.ECONOMY_DB_PATH)
-        self.game_progress_repository = self._build_game_progress_repository(settings)
-        self.form_repository = SQLiteFormRepository(settings.FORM_DB_PATH)
-        self.economy_repository = SQLiteEconomyRepository(settings.ECONOMY_DB_PATH)
-        logger.info("Runtime de persistencia: SQLite.")
-
-    def _get_postgres_database(self, settings) -> PostgresDatabase:
-        if self.postgres_database is None:
-            self.postgres_database = self._create_postgres_database(settings)
-        return self.postgres_database
-
-    @staticmethod
-    def _create_postgres_database(settings) -> PostgresDatabase:
-        return PostgresDatabase(
-            settings.POSTGRES_DSN,
-            schema=settings.POSTGRES_SCHEMA,
-            min_size=settings.POSTGRES_POOL_MIN_SIZE,
-            max_size=settings.POSTGRES_POOL_MAX_SIZE,
-        )
+        for name in self.container.__dataclass_fields__:
+            setattr(self, name, getattr(self.container, name))
+        logger.info("Runtime de persistencia: PostgreSQL exclusivo.")
 
     async def setup_hook(self) -> None:
         """
         Executado antes do bot ficar online.
         Ideal para carregar extensoes e sincronizar slash commands.
         """
-        setup_logging()
         logger.info("Iniciando setup do bot...")
+        await self.container.open()
 
         await self.load_all_extensions()
         await self.sync_commands()
@@ -196,22 +82,23 @@ class DiscordBot(commands.Bot):
         source = file.read_text(encoding="utf-8")
         return "def setup(" in source or "async def setup(" in source
 
-    def _build_game_progress_repository(self, settings):
-        if settings.GAME_PROGRESS_DB_BACKEND == "postgres":
-            logger.info("Usando PostgreSQL para progresso dos jogos.")
-            return PostgresGameProgressRepository(
-                self._get_postgres_database(settings),
-            )
-        if settings.GAME_PROGRESS_DB_BACKEND == "sqlite":
-            return SQLiteGameProgressRepository(settings.GAME_PROGRESS_DB_PATH)
-        raise ValueError(
-            "GAME_PROGRESS_DB_BACKEND precisa ser 'sqlite' ou 'postgres'."
-        )
-
     async def close(self) -> None:
-        await super().close()
-        if self.postgres_database is not None:
-            await self.postgres_database.close()
+        try:
+            await super().close()
+        finally:
+            await self.container.close()
+
+    async def on_connect(self) -> None:
+        logger.info("network.discord.gateway.connected")
+
+    async def on_disconnect(self) -> None:
+        logger.warning("network.discord.gateway.disconnected")
+
+    async def on_resumed(self) -> None:
+        logger.info("network.discord.gateway.resumed")
+
+    async def on_socket_event_type(self, event_type: str) -> None:
+        logger.debug("network.discord.gateway.event type=%s", event_type)
 
     async def sync_commands(self) -> None:
         """

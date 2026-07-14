@@ -498,14 +498,10 @@ def build_uno_hand_embed(
             replacement = (
                 "Máquina"
                 if participant.is_bot
-                else "Você"
-                if participant.user_id == user_id
-                else "Outro jogador"
+                else "Você" if participant.user_id == user_id else "Outro jogador"
             )
             action = action.replace(f"<@{participant.user_id}>", replacement)
-        embed.set_footer(
-            text=f"Cor atual: {session.current_color.label} · {action}"
-        )
+        embed.set_footer(text=f"Cor atual: {session.current_color.label} · {action}")
     return embed
 
 

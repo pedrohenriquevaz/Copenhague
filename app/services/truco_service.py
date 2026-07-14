@@ -23,7 +23,7 @@ from app.models.truco import (
     TrucoSuit,
     TrucoTeam,
 )
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.truco_repository import TrucoRepositoryProtocol
 from app.services.economy_limits import (
     apply_daily_casino_profit_cap,
@@ -60,7 +60,7 @@ class TrucoService:
     def __init__(
         self,
         repository: TrucoRepositoryProtocol,
-        economy_repository: SQLiteEconomyRepository,
+        economy_repository: EconomyRepositoryProtocol,
         *,
         progress_service: GameProgressService | None = None,
         rng: random.Random | random.SystemRandom | None = None,

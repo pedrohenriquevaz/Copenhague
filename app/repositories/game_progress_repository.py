@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-import threading
-from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.models.casino import RaceMascot
 from app.models.game_progress import (
@@ -21,6 +18,8 @@ from app.models.game_progress import (
     UserGameAchievement,
 )
 from app.models.giveaway import parse_datetime, serialize_datetime, utc_now
+from app.repositories.errors import RepositoryIntegrityError
+from app.repositories.postgres_database import PostgresConnectionAdapter
 
 
 class GameProgressRepositoryProtocol(Protocol):
@@ -130,14 +129,8 @@ class GameProgressRepositoryProtocol(Protocol):
     ) -> CollectiveRaceBet | None: ...
 
 
-class SQLiteGameProgressRepository:
-    """Persistencia SQLite para progresso social dos jogos."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
+class _GameProgressRepositoryImplementation:
+    """Persistencia PostgreSQL para progresso social dos jogos."""
 
     async def ensure_achievement(
         self,
@@ -316,15 +309,6 @@ class SQLiteGameProgressRepository:
             bet_id,
             transaction_id,
         )
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        return connection
 
     def _initialize_schema(self) -> None:
         with self._lock:
@@ -982,7 +966,7 @@ class SQLiteGameProgressRepository:
                             serialize_datetime(data.created_at),
                         ),
                     )
-                except sqlite3.IntegrityError as exc:
+                except RepositoryIntegrityError as exc:
                     connection.rollback()
                     raise ValueError("Voce ja apostou nesta corrida.") from exc
 
@@ -1142,7 +1126,7 @@ class SQLiteGameProgressRepository:
 
     @staticmethod
     def _ensure_column(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         table: str,
         column: str,
         definition: str,
@@ -1154,10 +1138,10 @@ class SQLiteGameProgressRepository:
 
     @staticmethod
     def _get_achievement_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         achievement_key: str,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -1169,11 +1153,11 @@ class SQLiteGameProgressRepository:
 
     @staticmethod
     def _get_user_achievement_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         user_id: int,
         achievement_key: str,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT
@@ -1191,10 +1175,10 @@ class SQLiteGameProgressRepository:
 
     @staticmethod
     def _get_jackpot_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
         jackpot_key: str,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -1206,9 +1190,9 @@ class SQLiteGameProgressRepository:
 
     @staticmethod
     def _get_seasonal_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         guild_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -1220,9 +1204,9 @@ class SQLiteGameProgressRepository:
 
     @staticmethod
     def _get_collective_race_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         race_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -1234,9 +1218,9 @@ class SQLiteGameProgressRepository:
 
     @staticmethod
     def _get_collective_race_bet_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         bet_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -1247,7 +1231,7 @@ class SQLiteGameProgressRepository:
         ).fetchone()
 
     @staticmethod
-    def _row_to_achievement(row: sqlite3.Row) -> GameAchievement:
+    def _row_to_achievement(row: dict[str, Any]) -> GameAchievement:
         return GameAchievement(
             guild_id=int(row["guild_id"]),
             achievement_key=str(row["achievement_key"]),
@@ -1261,8 +1245,8 @@ class SQLiteGameProgressRepository:
 
     def _row_to_user_achievement(
         self,
-        user_row: sqlite3.Row,
-        achievement_row: sqlite3.Row,
+        user_row: dict[str, Any],
+        achievement_row: dict[str, Any],
     ) -> UserGameAchievement:
         return UserGameAchievement(
             guild_id=int(user_row["guild_id"]),
@@ -1272,7 +1256,7 @@ class SQLiteGameProgressRepository:
         )
 
     @staticmethod
-    def _row_to_jackpot(row: sqlite3.Row) -> JackpotState:
+    def _row_to_jackpot(row: dict[str, Any]) -> JackpotState:
         return JackpotState(
             guild_id=int(row["guild_id"]),
             jackpot_key=str(row["jackpot_key"]),
@@ -1281,7 +1265,7 @@ class SQLiteGameProgressRepository:
         )
 
     @staticmethod
-    def _row_to_seasonal(row: sqlite3.Row) -> SeasonalSetting:
+    def _row_to_seasonal(row: dict[str, Any]) -> SeasonalSetting:
         return SeasonalSetting(
             guild_id=int(row["guild_id"]),
             theme=SeasonalTheme(str(row["theme"])),
@@ -1289,7 +1273,7 @@ class SQLiteGameProgressRepository:
         )
 
     @staticmethod
-    def _row_to_collective_race(row: sqlite3.Row) -> CollectiveRaceSession:
+    def _row_to_collective_race(row: dict[str, Any]) -> CollectiveRaceSession:
         winner = row["winner"]
         finished_at = row["finished_at"]
         return CollectiveRaceSession(
@@ -1311,7 +1295,7 @@ class SQLiteGameProgressRepository:
         )
 
     @staticmethod
-    def _row_to_collective_race_bet(row: sqlite3.Row) -> CollectiveRaceBet:
+    def _row_to_collective_race_bet(row: dict[str, Any]) -> CollectiveRaceBet:
         settled_at = row["settled_at"]
         return CollectiveRaceBet(
             id=int(row["id"]),

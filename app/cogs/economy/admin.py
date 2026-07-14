@@ -370,10 +370,7 @@ class EconomyAdminCog(commands.Cog):
             settings.currency_name,
         )
         await interaction.followup.send(
-            (
-                "Configuração do Truco atualizada.\n"
-                f"Aposta mínima: **{minimum}**"
-            ),
+            ("Configuração do Truco atualizada.\n" f"Aposta mínima: **{minimum}**"),
             ephemeral=True,
         )
 

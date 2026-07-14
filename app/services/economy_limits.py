@@ -4,7 +4,7 @@ from datetime import timedelta, timezone
 
 from app.models.giveaway import utc_now
 from app.models.guild_settings import GuildEconomySettings
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 
 DAILY_PROFIT_TIMEZONE = timezone(timedelta(hours=-3))
 PROFIT_DIFFICULTY_ROLL_MAX = 10_000
@@ -57,7 +57,7 @@ def apply_daily_profit_difficulty_to_probability(
 
 
 async def apply_daily_casino_profit_cap(
-    repository: SQLiteEconomyRepository,
+    repository: EconomyRepositoryProtocol,
     settings: GuildEconomySettings,
     *,
     guild_id: int,

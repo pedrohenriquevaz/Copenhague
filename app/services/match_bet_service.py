@@ -15,7 +15,7 @@ from app.models.match_bet import (
     MatchBetTicketCreate,
     MatchBetTicketStatus,
 )
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.match_bet_repository import MatchBetRepositoryProtocol
 from app.services.economy_limits import apply_daily_casino_profit_cap
 
@@ -38,7 +38,7 @@ class MatchBetService:
     def __init__(
         self,
         repository: MatchBetRepositoryProtocol,
-        economy_repository: SQLiteEconomyRepository,
+        economy_repository: EconomyRepositoryProtocol,
     ) -> None:
         self._repository = repository
         self._economy_repository = economy_repository

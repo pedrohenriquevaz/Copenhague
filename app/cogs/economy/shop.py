@@ -164,9 +164,7 @@ class ShopCog(commands.Cog):
         max_por_usuario="Novo limite por usuario. Use 0 para remover o limite.",
         cargo_entregue="Novo cargo entregue quando o tipo for ROLE.",
         mensagem_entrega="Nova mensagem de entrega. Use texto vazio para limpar.",
-        duracao_dias=(
-            "Duração do item em dias. Use 0 para deixar permanente."
-        ),
+        duracao_dias=("Duração do item em dias. Use 0 para deixar permanente."),
         ativo="Ativa ou desativa o item na loja.",
     )
     async def reward_update(

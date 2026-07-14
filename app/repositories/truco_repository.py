@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-import threading
-from pathlib import Path
 from typing import Any, Protocol
 
 from app.models.giveaway import parse_datetime, serialize_datetime, utc_now
@@ -35,27 +32,13 @@ class TrucoRepositoryProtocol(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
-    async def reset_user_profile(self, guild_id: int, user_id: int) -> dict[str, int]:
-        ...
+    async def reset_user_profile(
+        self, guild_id: int, user_id: int
+    ) -> dict[str, int]: ...
 
 
-class SQLiteTrucoRepository:
+class _TrucoRepositoryImplementation:
     """Persistencia de partidas de Truco."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        return connection
 
     def _initialize_schema(self) -> None:
         with self._lock:
@@ -337,7 +320,7 @@ class SQLiteTrucoRepository:
         return json.dumps(session.to_dict(), ensure_ascii=False)
 
     @staticmethod
-    def _row_to_game(row: sqlite3.Row) -> TrucoSession:
+    def _row_to_game(row: dict[str, Any]) -> TrucoSession:
         data = json.loads(str(row["snapshot_json"]))
         data["id"] = int(row["id"])
         data["message_id"] = (

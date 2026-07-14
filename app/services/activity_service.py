@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.models.activity import ActivityStats
 from app.models.economy import ActivityConversionResult
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 
 
 class ActivityServiceError(Exception):
@@ -16,7 +16,7 @@ class ActivityValidationError(ActivityServiceError):
 class ActivityService:
     """Orquestra tracking nativo e conversao sob demanda."""
 
-    def __init__(self, repository: SQLiteEconomyRepository) -> None:
+    def __init__(self, repository: EconomyRepositoryProtocol) -> None:
         self._repository = repository
 
     async def record_message(

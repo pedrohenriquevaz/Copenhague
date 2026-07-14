@@ -4,9 +4,9 @@ import gc
 from pathlib import Path
 
 from app.models.giveaway import GiveawayDrawStatus
-from app.repositories.giveaway_repository import SQLiteGiveawayRepository
 from app.services.giveaway_service import GiveawayService
 from app.utils.embeds import build_giveaway_final_embed, format_reward_text
+from tests.postgres_support import PostgresGiveawayRepository
 
 
 def test_parse_reward_plan_supports_compact_and_json() -> None:
@@ -26,12 +26,12 @@ def test_parse_reward_plan_supports_compact_and_json() -> None:
 
 
 async def test_giveaway_service_creates_and_draws_codes() -> None:
-    db_path = Path("tests") / "tmp_giveaways.sqlite3"
+    db_path = Path("tests") / "tmp_giveaways.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteGiveawayRepository(db_path)
+        repository = PostgresGiveawayRepository(db_path)
         service = GiveawayService(repository)
 
         creation = await service.create_event(
@@ -83,12 +83,12 @@ async def test_giveaway_service_creates_and_draws_codes() -> None:
 
 
 async def test_giveaway_extra_tickets_allow_additional_draws() -> None:
-    db_path = Path("tests") / "tmp_giveaway_tickets.sqlite3"
+    db_path = Path("tests") / "tmp_giveaway_tickets.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteGiveawayRepository(db_path)
+        repository = PostgresGiveawayRepository(db_path)
         service = GiveawayService(repository)
 
         creation = await service.create_event(
@@ -132,12 +132,12 @@ async def test_giveaway_extra_tickets_allow_additional_draws() -> None:
 
 
 async def test_giveaway_finalization_returns_and_embeds_winners() -> None:
-    db_path = Path("tests") / "tmp_giveaway_winners.sqlite3"
+    db_path = Path("tests") / "tmp_giveaway_winners.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteGiveawayRepository(db_path)
+        repository = PostgresGiveawayRepository(db_path)
         service = GiveawayService(repository)
 
         creation = await service.create_event(

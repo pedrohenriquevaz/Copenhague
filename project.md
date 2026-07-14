@@ -26,7 +26,7 @@ O desenvolvimento deve preservar os sistemas atuais:
 - Moderacao basica;
 - Comandos de diversao;
 - carregamento automatico de cogs;
-- persistencia SQLite via repositories.
+- persistencia PostgreSQL via repositories.
 
 ## 2. Estado Atual do Projeto
 
@@ -43,9 +43,10 @@ A estrutura real do projeto hoje e:
 |   |   |-- giveaway/     # Giveaway de codigos
 |   |   |-- moderation/   # Ban e placeholders
 |   |   `-- utility/      # Reservado
-|   |-- core/             # Bot, config e logging
+|   |-- core/             # Bot, config, logging e composicao
+|   |-- integrations/     # HTTP, timeout, erros e acesso de rede
 |   |-- models/           # Dataclasses de dominio
-|   |-- repositories/     # Persistencia SQLite
+|   |-- repositories/     # Persistencia PostgreSQL
 |   |-- services/         # Regras de negocio
 |   |-- types/            # Protocolos/tipos compartilhados
 |   |-- ui/               # Views, botoes, selects e modals
@@ -65,7 +66,7 @@ O bot ja segue uma separacao saudavel:
 - Repositories concentram persistencia.
 - Models usam dataclasses e enums de dominio.
 - UI concentra views, buttons, selects e modals.
-- `DiscordBot` instancia repositories e services em `app/core/bot.py`.
+- `AppContainer` instancia repositories, services e integracoes.
 
 ## 3. Decisoes de Compatibilidade
 
@@ -76,24 +77,16 @@ Estas decisoes sao obrigatorias para evitar retrabalho e sobreposicao.
 O prompt original sugeria uma arvore `bot/`. Este projeto ja usa `app/`.
 Todas as novas funcionalidades devem ser adicionadas dentro de `app/`.
 
-### 3.2. Nao trocar a persistencia atual
+### 3.2. Persistencia exclusiva em PostgreSQL
 
-O prompt original sugeria PostgreSQL, `asyncpg` e migrations. Para este
-projeto, a primeira versao da economia deve manter o padrao atual:
-
-- SQLite;
-- repositories dedicados;
-- schema criado/atualizado no proprio repository;
-- chamadas bloqueantes isoladas com `asyncio.to_thread`;
-- locks e transacoes nas operacoes criticas.
-
-PostgreSQL, migrations formais ou ORM ficam como evolucao futura, nao como
-pre-requisito desta fase.
+Todos os dominios usam PostgreSQL 16 por meio de repositories dedicados,
+`psycopg` e pool de conexoes. O schema evolui por migrations versionadas.
+Nao devem ser introduzidos backends alternativos de persistencia.
 
 ### 3.3. Nao misturar SQL em Cogs
 
 Comandos novos devem chamar services. Services devem chamar repositories.
-Nenhum comando deve abrir conexao SQLite diretamente.
+Nenhum comando deve abrir conexao PostgreSQL diretamente.
 
 ### 3.4. Nao sobrescrever funcionalidades existentes
 
@@ -187,7 +180,7 @@ Responsabilidades:
 
 Responsabilidades:
 
-- criar/atualizar schema SQLite;
+- executar queries PostgreSQL;
 - executar queries;
 - manter locks por banco;
 - usar `BEGIN IMMEDIATE` em operacoes criticas;
@@ -463,17 +456,16 @@ updated_at
 ```
 
 Configuracoes globais sensiveis continuam em `.env`.
-Configuracoes por guild ficam no SQLite.
+Configuracoes por guild ficam no PostgreSQL.
 
-## 10. Persistencia SQLite Adaptada
+## 10. Persistencia PostgreSQL
 
 Criar novos repositories seguindo o padrao dos existentes:
 
-- `_connect()` configura `row_factory`, `foreign_keys`, `busy_timeout`,
-  `synchronous=NORMAL` e `temp_store=MEMORY`;
-- `_initialize_schema()` cria tabelas e indices;
+- conexoes sao obtidas do pool compartilhado;
+- migrations versionadas criam tabelas e indices;
 - metodos publicos async delegam para sync com `asyncio.to_thread`;
-- operacoes criticas usam `threading.RLock` e `BEGIN IMMEDIATE`.
+- operacoes criticas usam transacoes e bloqueios de linha.
 
 Indices recomendados:
 
@@ -766,8 +758,8 @@ permissoes do servidor, canais e sincronizacao de Slash Commands.
 
 #### Backups e atualizacao
 
-- Fazer backup de `data/*.sqlite3` e `data/*.db` antes de atualizar.
-- Manter o volume `./data:/app/data` ativo no Docker.
+- Fazer backup com `scripts/backup-postgres.ps1` antes de atualizar.
+- Manter o volume nomeado `postgres-data` ativo no Docker.
 - Evitar apagar mensagens publicas com botoes persistentes sem publicar novas.
 - Em homologacao, usar `GUILD_ID` para sincronizacao rapida de comandos.
 - `warnings.py` fica como milestone futura, pois advertencias precisam de

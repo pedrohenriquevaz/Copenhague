@@ -6,17 +6,17 @@ from pathlib import Path
 import pytest
 
 from app.models.bolao import BolaoGuessStatus
-from app.repositories.bolao_repository import SQLiteBolaoRepository
 from app.services.bolao_service import BolaoService, BolaoValidationError
+from tests.postgres_support import PostgresBolaoRepository
 
 
 async def test_bolao_service_creates_publishes_and_registers_guess() -> None:
-    db_path = Path("tests") / "tmp_bolao.sqlite3"
+    db_path = Path("tests") / "tmp_bolao.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteBolaoRepository(db_path)
+        repository = PostgresBolaoRepository(db_path)
         service = BolaoService(repository)
 
         event = await service.create_event(
@@ -60,16 +60,16 @@ async def test_bolao_service_creates_publishes_and_registers_guess() -> None:
         repository = None
         service = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_bolao_service_closes_and_lists_active_events() -> None:
-    db_path = Path("tests") / "tmp_bolao_close.sqlite3"
+    db_path = Path("tests") / "tmp_bolao_close.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteBolaoRepository(db_path)
+        repository = PostgresBolaoRepository(db_path)
         service = BolaoService(repository)
 
         event = await service.create_event(
@@ -97,16 +97,16 @@ async def test_bolao_service_closes_and_lists_active_events() -> None:
         repository = None
         service = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
 async def test_bolao_service_validates_input() -> None:
-    db_path = Path("tests") / "tmp_bolao_validation.sqlite3"
+    db_path = Path("tests") / "tmp_bolao_validation.pg"
     if db_path.exists():
         db_path.unlink()
 
     try:
-        repository = SQLiteBolaoRepository(db_path)
+        repository = PostgresBolaoRepository(db_path)
         service = BolaoService(repository)
 
         with pytest.raises(BolaoValidationError, match="titulo"):
@@ -147,10 +147,10 @@ async def test_bolao_service_validates_input() -> None:
         repository = None
         service = None
         gc.collect()
-        _cleanup_sqlite(db_path)
+        _cleanup_database_files(db_path)
 
 
-def _cleanup_sqlite(db_path: Path) -> None:
+def _cleanup_database_files(db_path: Path) -> None:
     if db_path.exists():
         db_path.unlink()
     for suffix in ("-wal", "-shm"):

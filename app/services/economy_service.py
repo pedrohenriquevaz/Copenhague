@@ -18,7 +18,7 @@ from app.models.economy import (
 )
 from app.models.giveaway import utc_now
 from app.models.guild_settings import GuildEconomySettings
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 
 
 class EconomyServiceError(Exception):
@@ -54,7 +54,7 @@ class EconomyService:
     STARTER_PACK_AMOUNT = 500
     DAILY_GIFT_TIMEZONE = timezone(timedelta(hours=-3))
 
-    def __init__(self, repository: SQLiteEconomyRepository) -> None:
+    def __init__(self, repository: EconomyRepositoryProtocol) -> None:
         self._repository = repository
 
     async def get_wallet(self, guild_id: int, user_id: int) -> UserWallet:

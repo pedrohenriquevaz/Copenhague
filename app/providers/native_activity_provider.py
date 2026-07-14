@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.models.activity import ActivityStats
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 
 
 class NativeActivityProvider:
@@ -9,7 +9,7 @@ class NativeActivityProvider:
 
     source = "native"
 
-    def __init__(self, repository: SQLiteEconomyRepository) -> None:
+    def __init__(self, repository: EconomyRepositoryProtocol) -> None:
         self._repository = repository
 
     async def get_user_stats(self, guild_id: int, user_id: int) -> ActivityStats:

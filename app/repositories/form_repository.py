@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-import threading
-from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.models.form import (
     FormDefinition,
@@ -17,6 +14,7 @@ from app.models.form import (
     FormSubmitStatus,
 )
 from app.models.giveaway import parse_datetime, serialize_datetime, utc_now
+from app.repositories.postgres_database import PostgresConnectionAdapter
 
 
 class FormRepositoryProtocol(Protocol):
@@ -46,14 +44,8 @@ class FormRepositoryProtocol(Protocol):
     ) -> FormSubmitResult: ...
 
 
-class SQLiteFormRepository:
-    """Persistencia SQLite para formularios e respostas."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
+class _FormRepositoryImplementation:
+    """Persistencia PostgreSQL para formularios e respostas."""
 
     async def create_form(self, form: FormDefinitionCreate) -> FormDefinition:
         return await asyncio.to_thread(self._create_form_sync, form)
@@ -93,15 +85,6 @@ class SQLiteFormRepository:
             user_id,
             answers,
         )
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        return connection
 
     def _initialize_schema(self) -> None:
         with self._lock:
@@ -326,9 +309,9 @@ class SQLiteFormRepository:
 
     @staticmethod
     def _get_form_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         form_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT
@@ -379,7 +362,7 @@ class SQLiteFormRepository:
         ]
 
     @classmethod
-    def _row_to_form(cls, row: sqlite3.Row) -> FormDefinition:
+    def _row_to_form(cls, row: dict[str, Any]) -> FormDefinition:
         return FormDefinition(
             id=int(row["id"]),
             title=str(row["title"]),
@@ -398,7 +381,7 @@ class SQLiteFormRepository:
         )
 
     @staticmethod
-    def _row_to_response(row: sqlite3.Row) -> FormResponse:
+    def _row_to_response(row: dict[str, Any]) -> FormResponse:
         return FormResponse(
             id=int(row["id"]),
             form_id=int(row["form_id"]),

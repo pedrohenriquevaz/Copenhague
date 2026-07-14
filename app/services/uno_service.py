@@ -15,7 +15,7 @@ from app.models.uno import (
     UnoSession,
     UnoValue,
 )
-from app.repositories.economy_repository import SQLiteEconomyRepository
+from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.uno_repository import UnoRepositoryProtocol
 from app.services.economy_limits import apply_daily_casino_profit_cap
 
@@ -37,7 +37,7 @@ class UnoService:
     def __init__(
         self,
         repository: UnoRepositoryProtocol,
-        economy_repository: SQLiteEconomyRepository,
+        economy_repository: EconomyRepositoryProtocol,
         *,
         rng: random.Random | random.SystemRandom | None = None,
     ) -> None:
@@ -517,9 +517,7 @@ class UnoService:
         session.drawn_card_id = None
         session.status = UnoGameStatus.PLAYING
         first_player = self._player_reference(session, session.players[0].user_id)
-        session.last_action = (
-            f"Partida iniciada. {first_player} joga primeiro."
-        )
+        session.last_action = f"Partida iniciada. {first_player} joga primeiro."
 
     async def _validate_stake_and_balance(
         self,

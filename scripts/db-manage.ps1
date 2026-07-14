@@ -1,10 +1,7 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("status", "upgrade", "validate", "migrate-sqlite")]
+    [ValidateSet("status", "upgrade", "validate")]
     [string]$Command = "status",
-    [switch]$Replace,
-    [switch]$NoBackup,
-    [switch]$SkipSchemaRefresh,
     [string]$PostgresDsn = "",
     [string]$Schema = ""
 )
@@ -27,7 +24,7 @@ if (-not $Schema) {
     $Schema = "copenhague"
 }
 
-if ($Command -in @("upgrade", "validate", "migrate-sqlite")) {
+if ($Command -in @("upgrade", "validate")) {
     Write-Host "Garantindo Postgres local ativo..."
     docker compose up -d postgres
 }
@@ -45,17 +42,5 @@ $arguments = @(
     $Schema,
     $Command
 )
-
-if ($Command -eq "migrate-sqlite") {
-    if ($Replace) {
-        $arguments += "--replace"
-    }
-    if ($NoBackup) {
-        $arguments += "--no-backup"
-    }
-    if ($SkipSchemaRefresh) {
-        $arguments += "--skip-schema-refresh"
-    }
-}
 
 & $python @arguments

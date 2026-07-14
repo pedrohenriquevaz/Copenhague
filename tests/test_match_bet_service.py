@@ -6,16 +6,15 @@ import pytest
 
 from app.models.economy import EconomyTransactionType
 from app.models.match_bet import MatchBetTicketStatus
-from app.repositories.economy_repository import SQLiteEconomyRepository
-from app.repositories.match_bet_repository import SQLiteMatchBetRepository
 from app.services.match_bet_service import MatchBetService, MatchBetValidationError
+from tests.postgres_support import PostgresEconomyRepository, PostgresMatchBetRepository
 
 
 async def test_match_bet_locks_odds_and_pays_multiple_tickets(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
     service = MatchBetService(repository, economy)
     await _seed_wallet(economy, balance=1000)
 
@@ -69,8 +68,8 @@ async def test_match_bet_locks_odds_and_pays_multiple_tickets(
 async def test_match_bet_insufficient_balance_does_not_create_ticket(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
     service = MatchBetService(repository, economy)
     await _seed_wallet(economy, balance=50)
     match = await service.create_match(
@@ -102,9 +101,9 @@ async def test_match_bet_insufficient_balance_does_not_create_ticket(
 
 
 async def test_match_bet_uses_configured_min_stake(tmp_path: Path) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
     await economy.update_guild_settings(1, {"casino_min_bet_match_bet": 150})
-    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
     service = MatchBetService(repository, economy)
     await _seed_wallet(economy, balance=1000)
     match = await service.create_match(
@@ -128,8 +127,8 @@ async def test_match_bet_uses_configured_min_stake(tmp_path: Path) -> None:
 
 
 async def test_match_bet_cancel_refunds_open_tickets(tmp_path: Path) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
     service = MatchBetService(repository, economy)
     await _seed_wallet(economy, balance=1000)
     match = await service.create_match(
@@ -163,8 +162,8 @@ async def test_match_bet_cancel_refunds_open_tickets(tmp_path: Path) -> None:
 
 
 async def test_match_bet_admin_summary(tmp_path: Path) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
     service = MatchBetService(repository, economy)
     await _seed_wallet(economy, balance=1000)
     match = await service.create_match(
@@ -198,8 +197,8 @@ async def test_match_bet_admin_summary(tmp_path: Path) -> None:
 async def test_match_bet_reset_user_profile_clears_only_user_tickets(
     tmp_path: Path,
 ) -> None:
-    economy = SQLiteEconomyRepository(tmp_path / "economy.db")
-    repository = SQLiteMatchBetRepository(tmp_path / "bets.db")
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
     service = MatchBetService(repository, economy)
     await _seed_wallet(economy, user_id=10, balance=1000)
     await _seed_wallet(economy, user_id=20, balance=1000)
@@ -239,7 +238,7 @@ async def test_match_bet_reset_user_profile_clears_only_user_tickets(
 
 
 async def _seed_wallet(
-    repository: SQLiteEconomyRepository,
+    repository: PostgresEconomyRepository,
     *,
     user_id: int = 10,
     balance: int,

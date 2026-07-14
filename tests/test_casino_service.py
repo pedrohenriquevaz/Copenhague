@@ -6,12 +6,12 @@ import pytest
 
 from app.models.casino import CasinoOutcome, CoinSide, RaceMascot
 from app.models.economy import EconomyTransactionType
-from app.repositories.economy_repository import SQLiteEconomyRepository
 from app.services.casino_service import (
     SLOT_SYMBOLS,
     CasinoService,
     CasinoValidationError,
 )
+from tests.postgres_support import PostgresEconomyRepository
 
 
 class FixedRng:
@@ -36,7 +36,7 @@ class FixedRng:
 
 
 async def test_coin_flip_debits_bet_and_pays_win(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
         repository,
@@ -60,7 +60,7 @@ async def test_coin_flip_debits_bet_and_pays_win(tmp_path: Path) -> None:
 
 
 async def test_dice_exact_number_pays_reduced_multiplier(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
         repository,
@@ -83,7 +83,7 @@ async def test_dice_exact_number_pays_reduced_multiplier(tmp_path: Path) -> None
 
 
 async def test_slot_triple_symbol_uses_paytable(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     symbol = SLOT_SYMBOLS[-1]
     service = CasinoService(
@@ -102,7 +102,7 @@ async def test_slot_triple_symbol_uses_paytable(tmp_path: Path) -> None:
 
 
 async def test_roulette_green_pays_ten_times(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
         repository,
@@ -124,7 +124,7 @@ async def test_roulette_green_pays_ten_times(tmp_path: Path) -> None:
 
 
 async def test_roulette_black_loses_against_red(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
         repository,
@@ -146,7 +146,7 @@ async def test_roulette_black_loses_against_red(tmp_path: Path) -> None:
 
 
 async def test_mascot_race_win_pays_five_times(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
         repository,
@@ -168,7 +168,7 @@ async def test_mascot_race_win_pays_five_times(tmp_path: Path) -> None:
 
 
 async def test_duel_dice_debits_both_players_and_pays_pot(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, user_id=10, balance=1000)
     await _seed_wallet(repository, user_id=20, balance=1000)
     service = CasinoService(
@@ -192,7 +192,7 @@ async def test_duel_dice_debits_both_players_and_pays_pot(tmp_path: Path) -> Non
 
 
 async def test_duel_draw_refunds_both_players(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, user_id=10, balance=1000)
     await _seed_wallet(repository, user_id=20, balance=1000)
     service = CasinoService(
@@ -215,7 +215,7 @@ async def test_duel_draw_refunds_both_players(tmp_path: Path) -> None:
 
 
 async def test_duel_cooldown_blocks_recent_player(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, user_id=10, balance=1000)
     await _seed_wallet(repository, user_id=20, balance=1000)
     await _seed_wallet(repository, user_id=30, balance=1000)
@@ -244,7 +244,7 @@ async def test_duel_cooldown_blocks_recent_player(tmp_path: Path) -> None:
 
 
 async def test_casino_user_stats_and_ranking(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, user_id=10, balance=1000)
     await _seed_wallet(repository, user_id=20, balance=1000)
     service = CasinoService(
@@ -268,7 +268,7 @@ async def test_casino_user_stats_and_ranking(tmp_path: Path) -> None:
 
 
 async def test_casino_uses_configured_max_bet(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=5000)
     service = CasinoService(
         repository,
@@ -286,7 +286,7 @@ async def test_casino_uses_configured_max_bet(tmp_path: Path) -> None:
 
 
 async def test_casino_uses_configured_min_bet_per_game(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await repository.update_guild_settings(1, {"casino_min_bet_dice": 50})
     await _seed_wallet(repository, balance=5000)
     service = CasinoService(
@@ -306,7 +306,7 @@ async def test_casino_uses_configured_min_bet_per_game(tmp_path: Path) -> None:
 
 
 async def test_casino_caps_daily_profit(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await repository.update_guild_settings(1, {"casino_daily_profit_limit": 30})
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
@@ -338,7 +338,7 @@ async def test_casino_caps_daily_profit(tmp_path: Path) -> None:
 async def test_casino_profit_pressure_can_downgrade_coin_flip_win(
     tmp_path: Path,
 ) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await repository.update_guild_settings(1, {"casino_daily_profit_limit": 5000})
     await _seed_wallet(repository, balance=10000)
     await repository.mutate_balance(
@@ -379,7 +379,7 @@ async def test_casino_profit_pressure_can_downgrade_coin_flip_win(
 
 
 async def test_casino_limiters_can_be_disabled(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await repository.update_guild_settings(
         1,
         {
@@ -426,7 +426,7 @@ async def test_casino_limiters_can_be_disabled(tmp_path: Path) -> None:
 
 
 async def test_casino_cooldown_blocks_repeated_game(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
         repository,
@@ -441,7 +441,7 @@ async def test_casino_cooldown_blocks_repeated_game(tmp_path: Path) -> None:
 
 
 async def test_casino_history_returns_only_game_transactions(tmp_path: Path) -> None:
-    repository = SQLiteEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await _seed_wallet(repository, balance=1000)
     service = CasinoService(
         repository,
@@ -458,7 +458,7 @@ async def test_casino_history_returns_only_game_transactions(tmp_path: Path) -> 
 
 
 async def _seed_wallet(
-    repository: SQLiteEconomyRepository,
+    repository: PostgresEconomyRepository,
     *,
     user_id: int = 10,
     balance: int,

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-import threading
-from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.models.giveaway import parse_datetime, serialize_datetime, utc_now
 from app.models.match_bet import (
@@ -15,6 +12,7 @@ from app.models.match_bet import (
     MatchBetTicketCreate,
     MatchBetTicketStatus,
 )
+from app.repositories.postgres_database import PostgresConnectionAdapter
 
 
 class MatchBetRepositoryProtocol(Protocol):
@@ -69,14 +67,8 @@ class MatchBetRepositoryProtocol(Protocol):
     ) -> MatchBetTicket | None: ...
 
 
-class SQLiteMatchBetRepository:
-    """Persistencia SQLite para partidas e apostas com odds."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._initialize_schema()
+class _MatchBetRepositoryImplementation:
+    """Persistencia PostgreSQL para partidas e apostas com odds."""
 
     async def create_match(self, data: MatchBetCreate) -> MatchBetMatch:
         return await asyncio.to_thread(self._create_match_sync, data)
@@ -154,15 +146,6 @@ class SQLiteMatchBetRepository:
             ticket_id,
             transaction_id,
         )
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._db_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA synchronous = NORMAL")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        return connection
 
     def _initialize_schema(self) -> None:
         with self._lock:
@@ -596,9 +579,9 @@ class SQLiteMatchBetRepository:
 
     @staticmethod
     def _get_match_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         match_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -610,9 +593,9 @@ class SQLiteMatchBetRepository:
 
     @staticmethod
     def _get_ticket_row(
-        connection: sqlite3.Connection,
+        connection: PostgresConnectionAdapter,
         ticket_id: int,
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         return connection.execute(
             """
             SELECT *
@@ -623,7 +606,7 @@ class SQLiteMatchBetRepository:
         ).fetchone()
 
     @staticmethod
-    def _row_to_match(row: sqlite3.Row) -> MatchBetMatch:
+    def _row_to_match(row: dict[str, Any]) -> MatchBetMatch:
         resolved_winner = row["resolved_winner"]
         return MatchBetMatch(
             id=int(row["id"]),
@@ -655,7 +638,7 @@ class SQLiteMatchBetRepository:
         )
 
     @staticmethod
-    def _row_to_ticket(row: sqlite3.Row) -> MatchBetTicket:
+    def _row_to_ticket(row: dict[str, Any]) -> MatchBetTicket:
         settled_at = row["settled_at"]
         return MatchBetTicket(
             id=int(row["id"]),
