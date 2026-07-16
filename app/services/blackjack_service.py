@@ -13,11 +13,11 @@ from app.models.casino import (
     CardSuit,
 )
 from app.models.economy import EconomyTransactionType
-from app.models.guild_settings import GuildEconomySettings
 from app.repositories.economy_protocol import EconomyRepositoryProtocol
+from app.services.economic_tier_service import EconomicTierService
 from app.services.economy_limits import (
-    apply_daily_casino_profit_cap,
-    current_daily_profit_window_start,
+    EconomicDifficultyDecision,
+    EconomicDifficultyPolicyService,
 )
 from app.services.game_progress_service import GameProgressService
 
@@ -43,11 +43,16 @@ class BlackjackService:
         *,
         progress_service: GameProgressService | None = None,
         deck_factory: Callable[[], list[BlackjackCard]] | None = None,
+        economic_policy: EconomicDifficultyPolicyService | None = None,
     ) -> None:
         self._repository = repository
         self._progress_service = progress_service
         self._deck_factory = deck_factory or self._build_shuffled_deck
+        self._economic_policy = economic_policy or EconomicDifficultyPolicyService(
+            repository, EconomicTierService()
+        )
         self._sessions: dict[tuple[int, int], BlackjackSession] = {}
+        self._economic_decisions: dict[tuple[int, int], EconomicDifficultyDecision] = {}
         self._win_streaks: dict[tuple[int, int], int] = {}
         self._lock = asyncio.Lock()
 
@@ -64,7 +69,13 @@ class BlackjackService:
             settings.casino_min_bet_blackjack,
             settings.casino_max_bet,
         )
-        await self._validate_daily_profit_limit(settings, guild_id, user_id)
+        economic_decision = await self._economic_policy.select(
+            settings,
+            guild_id=guild_id,
+            user_id=user_id,
+            game="blackjack",
+        )
+        self._raise_if_profit_limit_reached(economic_decision)
         key = (guild_id, user_id)
 
         async with self._lock:
@@ -78,6 +89,7 @@ class BlackjackService:
                 raise BlackjackValidationError("Saldo insuficiente para essa aposta.")
 
             await self._debit_bet(guild_id, user_id, bet, reason="blackjack_bet")
+            self._economic_decisions[key] = economic_decision
             session = BlackjackSession(
                 guild_id=guild_id,
                 user_id=user_id,
@@ -165,6 +177,7 @@ class BlackjackService:
         async with self._lock:
             key = (guild_id, user_id)
             self._sessions.pop(key, None)
+            self._economic_decisions.pop(key, None)
             self._win_streaks.pop(key, None)
 
     async def _resolve_natural_blackjack(self, session: BlackjackSession) -> None:
@@ -234,26 +247,16 @@ class BlackjackService:
 
         session.outcome = outcome
         self._sessions.pop(key, None)
+        economic_decision = self._economic_decisions.pop(key)
 
         if payout > 0:
-            settings = await self._repository.get_guild_settings(session.guild_id)
-            payout = await apply_daily_casino_profit_cap(
-                self._repository,
-                settings,
+            settlement = await self._economic_policy.settle_payout(
+                economic_decision,
                 guild_id=session.guild_id,
                 user_id=session.user_id,
                 stake=session.bet,
                 payout=payout,
-            )
-        session.payout = payout
-
-        if payout > 0:
-            await self._repository.mutate_balance(
-                guild_id=session.guild_id,
-                user_id=session.user_id,
-                amount=payout,
                 transaction_type=EconomyTransactionType.CASINO_PAYOUT,
-                actor_id=None,
                 reason="blackjack_payout",
                 metadata={
                     "game": "blackjack",
@@ -265,6 +268,8 @@ class BlackjackService:
                     "payout_multiplier_percent": session.payout_multiplier_percent,
                 },
             )
+            payout = settlement.paid_payout
+        session.payout = payout
         credit = await self._repository.apply_credit_protection(
             guild_id=session.guild_id,
             user_id=session.user_id,
@@ -390,23 +395,14 @@ class BlackjackService:
         if bet > max_bet:
             raise BlackjackValidationError(f"A aposta máxima e de {max_bet} ponto(s).")
 
-    async def _validate_daily_profit_limit(
-        self,
-        settings: GuildEconomySettings,
-        guild_id: int,
-        user_id: int,
+    @staticmethod
+    def _raise_if_profit_limit_reached(
+        decision: EconomicDifficultyDecision,
     ) -> None:
         if (
-            not settings.casino_limiters_enabled
-            or settings.casino_daily_profit_limit <= 0
+            decision.profit_cap_applies
+            and decision.daily_profit >= decision.daily_limit
         ):
-            return
-        current_profit = await self._repository.get_user_casino_profit_since(
-            guild_id,
-            user_id,
-            current_daily_profit_window_start(),
-        )
-        if current_profit >= settings.casino_daily_profit_limit:
             raise BlackjackValidationError(
                 "Voce atingiu o teto diário de lucro dos jogos."
             )

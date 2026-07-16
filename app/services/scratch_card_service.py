@@ -11,13 +11,13 @@ from app.models.game_progress import (
     ScratchCardTierConfig,
     SeasonalTheme,
 )
-from app.models.guild_settings import GuildEconomySettings
 from app.repositories.economy_protocol import EconomyRepositoryProtocol
+from app.services.economic_tier_service import EconomicTierService
 from app.services.economy_limits import (
     PROFIT_DIFFICULTY_ROLL_MAX,
-    apply_daily_casino_profit_cap,
+    EconomicDifficultyDecision,
+    EconomicDifficultyPolicyService,
     apply_daily_profit_difficulty_to_probability,
-    calculate_daily_profit_difficulty_bps,
     current_daily_profit_window_start,
 )
 from app.services.game_progress_service import GameProgressService
@@ -93,10 +93,14 @@ class ScratchCardService:
         progress_service: GameProgressService,
         *,
         rng: random.Random | random.SystemRandom | None = None,
+        economic_policy: EconomicDifficultyPolicyService | None = None,
     ) -> None:
         self._economy_repository = economy_repository
         self._progress_service = progress_service
         self._rng = rng or random.SystemRandom()
+        self._economic_policy = economic_policy or EconomicDifficultyPolicyService(
+            economy_repository, EconomicTierService()
+        )
         self._lock = asyncio.Lock()
 
     async def play(
@@ -117,16 +121,17 @@ class ScratchCardService:
                 "A aposta minima da raspadinha e "
                 f"{settings.casino_min_bet_scratch_card}."
             )
-        await self._validate_daily_profit_limit(guild_id, user_id)
-        difficulty_bps = await self._daily_profit_difficulty_bps(
+        economic_decision = await self._economic_policy.select(
             settings,
-            guild_id,
-            user_id,
+            guild_id=guild_id,
+            user_id=user_id,
+            game="scratch_card",
         )
+        self._raise_if_profit_limit_reached(economic_decision)
         seasonal = await self._progress_service.get_seasonal_theme(guild_id)
 
         async with self._lock:
-            if settings.casino_limiters_enabled:
+            if economic_decision.purchase_limit_applies:
                 await self._validate_daily_purchase_limit(guild_id, user_id)
             try:
                 debit = await self._economy_repository.mutate_balance(
@@ -150,7 +155,7 @@ class ScratchCardService:
             grid = self._build_grid(
                 seasonal.theme,
                 config,
-                difficulty_bps=difficulty_bps,
+                difficulty_bps=economic_decision.difficulty_bps,
             )
             winning_lines = self._find_winning_lines(grid)
             base_payout = (
@@ -163,21 +168,13 @@ class ScratchCardService:
 
             wallet: UserWallet = debit.wallet
             if payout > 0:
-                payout = await apply_daily_casino_profit_cap(
-                    self._economy_repository,
-                    settings,
+                settlement = await self._economic_policy.settle_payout(
+                    economic_decision,
                     guild_id=guild_id,
                     user_id=user_id,
                     stake=config.cost,
                     payout=payout,
-                )
-            if payout > 0:
-                payment = await self._economy_repository.mutate_balance(
-                    guild_id=guild_id,
-                    user_id=user_id,
-                    amount=payout,
                     transaction_type=EconomyTransactionType.CASINO_PAYOUT,
-                    actor_id=None,
                     reason="scratch_card_payout",
                     metadata={
                         "game": "scratch_card",
@@ -188,7 +185,8 @@ class ScratchCardService:
                         "winning_lines": winning_lines,
                     },
                 )
-                wallet = payment.wallet
+                payout = settlement.paid_payout
+                wallet = settlement.wallet
             credit = await self._economy_repository.apply_credit_protection(
                 guild_id=guild_id,
                 user_id=user_id,
@@ -333,27 +331,6 @@ class ScratchCardService:
             lines.append("Diagonal secundaria")
         return lines
 
-    async def _validate_daily_profit_limit(
-        self,
-        guild_id: int,
-        user_id: int,
-    ) -> None:
-        settings = await self._economy_repository.get_guild_settings(guild_id)
-        if (
-            not settings.casino_limiters_enabled
-            or settings.casino_daily_profit_limit <= 0
-        ):
-            return
-        current_profit = await self._economy_repository.get_user_casino_profit_since(
-            guild_id,
-            user_id,
-            current_daily_profit_window_start(),
-        )
-        if current_profit >= settings.casino_daily_profit_limit:
-            raise ScratchCardValidationError(
-                "Voce atingiu o teto diario de lucro dos jogos."
-            )
-
     async def _validate_daily_purchase_limit(
         self,
         guild_id: int,
@@ -372,23 +349,17 @@ class ScratchCardService:
                 "raspadinhas."
             )
 
-    async def _daily_profit_difficulty_bps(
-        self,
-        settings: GuildEconomySettings,
-        guild_id: int,
-        user_id: int,
-    ) -> int:
+    @staticmethod
+    def _raise_if_profit_limit_reached(
+        decision: EconomicDifficultyDecision,
+    ) -> None:
         if (
-            not settings.casino_limiters_enabled
-            or settings.casino_daily_profit_limit <= 0
+            decision.profit_cap_applies
+            and decision.daily_profit >= decision.daily_limit
         ):
-            return 0
-        current_profit = await self._economy_repository.get_user_casino_profit_since(
-            guild_id,
-            user_id,
-            current_daily_profit_window_start(),
-        )
-        return calculate_daily_profit_difficulty_bps(current_profit, settings)
+            raise ScratchCardValidationError(
+                "Voce atingiu o teto diario de lucro dos jogos."
+            )
 
     @staticmethod
     def _is_jackpot_grid(grid: Sequence[Sequence[str]]) -> bool:

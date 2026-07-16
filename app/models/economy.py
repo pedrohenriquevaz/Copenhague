@@ -27,6 +27,23 @@ class EconomyTransactionType(StrEnum):
     SAVINGS_WITHDRAW = "SAVINGS_WITHDRAW"
 
 
+@dataclass(frozen=True, slots=True)
+class EconomicTier:
+    """Faixa economica imutavel aplicavel a saldos inteiros."""
+
+    identifier: str
+    name: str
+    minimum_balance: int
+    maximum_balance: int | None
+    level: int
+
+    def contains(self, balance: int) -> bool:
+        """Indica se o saldo pertence a faixa; ambos os limites sao inclusivos."""
+        return balance >= self.minimum_balance and (
+            self.maximum_balance is None or balance <= self.maximum_balance
+        )
+
+
 @dataclass(slots=True)
 class UserWallet:
     """Carteira de pontos de um usuario em uma guild."""
@@ -55,6 +72,7 @@ class EconomyTransaction:
     reason: str | None
     metadata: dict[str, Any]
     created_at: datetime
+    idempotency_key: str | None = None
 
 
 @dataclass(slots=True)
@@ -75,6 +93,19 @@ class BalanceMutationResult:
 
     wallet: UserWallet
     transaction: EconomyTransaction
+
+
+@dataclass(slots=True)
+class CasinoPayoutSettlementResult:
+    """Pagamento de jogo limitado e creditado atomicamente."""
+
+    wallet: UserWallet
+    transaction: EconomyTransaction
+    requested_payout: int
+    paid_payout: int
+    daily_profit_before: int
+    profit_window_start: datetime
+    idempotent_replay: bool = False
 
 
 @dataclass(slots=True)
@@ -99,6 +130,7 @@ class CreditProtectionResult:
     cashback_percent: int = 0
     save_consumed: bool = False
     triggered_streak: int = 0
+    idempotent_replay: bool = False
 
 
 @dataclass(slots=True)

@@ -62,6 +62,10 @@ async def test_truco_accepts_all_debits_stakes_and_splits_pot(tmp_path) -> None:
         session = await service.accept_lobby(session.id or 0, user_id)
 
     assert session.status is TrucoGameStatus.PLAYING
+    assert set(session.economic_policy_snapshots) == {10, 20, 30, 40}
+    persisted_session = await truco_repository.get_game(session.id or 0)
+    assert persisted_session is not None
+    assert set(persisted_session.economic_policy_snapshots) == {10, 20, 30, 40}
     balances = {
         user_id: (await economy.get_wallet(1, user_id)).balance
         for user_id in (10, 20, 30, 40)
@@ -186,6 +190,80 @@ async def test_admin_force_cancel_refunds_active_game_once(tmp_path) -> None:
             actor_id=99,
             reason="Tentativa repetida.",
         )
+
+
+async def test_truco_partial_start_failure_retry_and_cancel_use_distinct_refunds(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    economy_repository = PostgresEconomyRepository(tmp_path / "economy.pg")
+    truco_repository = PostgresTrucoRepository(tmp_path / "economy.pg")
+    economy = EconomyService(economy_repository)
+    service = TrucoService(
+        truco_repository,
+        economy_repository,
+        rng=random.Random(4),
+    )
+    for user_id in (10, 20, 30, 40):
+        await economy.give_points(
+            guild_id=1,
+            user_id=user_id,
+            actor_id=99,
+            amount=1000,
+            reason="seed",
+        )
+    session = await service.create_lobby(
+        guild_id=1,
+        channel_id=100,
+        created_by=10,
+        partner_id=30,
+        opponent_1_id=20,
+        opponent_2_id=40,
+        stake=100,
+    )
+    for user_id in (10, 30, 20):
+        session = await service.accept_lobby(session.id or 0, user_id)
+
+    original_mutate_balance = economy_repository.mutate_balance
+    stake_attempts = 0
+
+    async def flaky_mutate_balance(**kwargs):
+        nonlocal stake_attempts
+        if kwargs.get("reason") == "truco_stake":
+            stake_attempts += 1
+            if stake_attempts == 4:
+                raise RuntimeError("falha inesperada simulada")
+        return await original_mutate_balance(**kwargs)
+
+    monkeypatch.setattr(economy_repository, "mutate_balance", flaky_mutate_balance)
+
+    with pytest.raises(RuntimeError, match="inesperada simulada"):
+        await service.accept_lobby(session.id or 0, 40)
+
+    assert {
+        user_id: (await economy.get_wallet(1, user_id)).balance
+        for user_id in (10, 20, 30, 40)
+    } == {10: 1000, 20: 1000, 30: 1000, 40: 1000}
+
+    session = await service.accept_lobby(session.id or 0, 40)
+    assert session.status is TrucoGameStatus.PLAYING
+    session = await service.cancel_game(session.id or 0, 10)
+    assert session.status is TrucoGameStatus.CANCELLED
+    assert {
+        user_id: (await economy.get_wallet(1, user_id)).balance
+        for user_id in (10, 20, 30, 40)
+    } == {10: 1000, 20: 1000, 30: 1000, 40: 1000}
+
+    refunds = [
+        transaction
+        for transaction in await economy_repository.list_transactions(1, 10, limit=20)
+        if transaction.reason in {"truco_failed_start", "truco_cancel_refund"}
+    ]
+    assert {transaction.reason for transaction in refunds} == {
+        "truco_failed_start",
+        "truco_cancel_refund",
+    }
+    assert len({transaction.idempotency_key for transaction in refunds}) == 2
 
 
 async def test_truco_pve_pays_two_times_stake_to_human_winner(tmp_path) -> None:

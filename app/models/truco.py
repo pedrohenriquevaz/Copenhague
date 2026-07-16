@@ -337,6 +337,7 @@ class TrucoSession:
     stake: int
     status: TrucoGameStatus
     players: list[TrucoPlayer]
+    economic_policy_snapshots: dict[int, dict[str, Any]] = field(default_factory=dict)
     game_mode: TrucoGameMode = TrucoGameMode.PVP
     score_blue: int = 0
     score_red: int = 0
@@ -419,6 +420,10 @@ class TrucoSession:
             "stake": self.stake,
             "status": self.status.value,
             "players": [player.to_dict() for player in self.players],
+            "economic_policy_snapshots": {
+                str(user_id): snapshot
+                for user_id, snapshot in self.economic_policy_snapshots.items()
+            },
             "game_mode": self.game_mode.value,
             "score_blue": self.score_blue,
             "score_red": self.score_red,
@@ -474,6 +479,12 @@ class TrucoSession:
                 TrucoPlayer.from_dict(player_data)
                 for player_data in data.get("players", [])
             ],
+            economic_policy_snapshots={
+                int(user_id): dict(snapshot)
+                for user_id, snapshot in data.get(
+                    "economic_policy_snapshots", {}
+                ).items()
+            },
             game_mode=TrucoGameMode(str(data.get("game_mode", "PVP"))),
             score_blue=int(data.get("score_blue", 0)),
             score_red=int(data.get("score_red", 0)),

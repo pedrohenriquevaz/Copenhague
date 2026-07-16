@@ -25,9 +25,9 @@ from app.models.truco import (
 )
 from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.truco_repository import TrucoRepositoryProtocol
+from app.services.economic_tier_service import EconomicTierService
 from app.services.economy_limits import (
-    apply_daily_casino_profit_cap,
-    current_daily_profit_window_start,
+    EconomicDifficultyPolicyService,
 )
 from app.services.game_progress_service import GameProgressService
 
@@ -64,11 +64,15 @@ class TrucoService:
         *,
         progress_service: GameProgressService | None = None,
         rng: random.Random | random.SystemRandom | None = None,
+        economic_policy: EconomicDifficultyPolicyService | None = None,
     ) -> None:
         self._repository = repository
         self._economy_repository = economy_repository
         self._progress_service = progress_service
         self._rng = rng or random.SystemRandom()
+        self._economic_policy = economic_policy or EconomicDifficultyPolicyService(
+            economy_repository, EconomicTierService()
+        )
         self._lock = asyncio.Lock()
 
     async def create_lobby(
@@ -555,12 +559,32 @@ class TrucoService:
         )
 
     async def _debit_all(self, session: TrucoSession) -> None:
-        debited: list[int] = []
+        settings = await self._economy_repository.get_guild_settings(session.guild_id)
+        snapshots: dict[int, dict[str, object]] = {}
+        for player in session.players:
+            if player.is_bot:
+                continue
+            decision = await self._economic_policy.select(
+                settings,
+                guild_id=session.guild_id,
+                user_id=player.user_id,
+                game="truco",
+            )
+            if (
+                decision.limiters_apply
+                and decision.daily_profit >= decision.daily_limit
+            ):
+                raise TrucoValidationError(
+                    f"<@{player.user_id}> atingiu o teto diario de lucro dos jogos."
+                )
+            snapshots[player.user_id] = self._economic_policy.snapshot(decision)
+        session.economic_policy_snapshots = snapshots
+        debited: list[tuple[int, int]] = []
         for player in session.players:
             if player.is_bot:
                 continue
             try:
-                await self._economy_repository.mutate_balance(
+                debit = await self._economy_repository.mutate_balance(
                     guild_id=session.guild_id,
                     user_id=player.user_id,
                     amount=-session.stake,
@@ -574,13 +598,23 @@ class TrucoService:
                         "stake": session.stake,
                     },
                 )
-                debited.append(player.user_id)
-            except ValueError as exc:
-                for user_id in debited:
-                    await self._refund_player(session, user_id, "truco_failed_start")
-                raise TrucoValidationError(
-                    f"<@{player.user_id}> não possui saldo suficiente."
-                ) from exc
+                debited.append((player.user_id, debit.transaction.id))
+            except Exception as exc:
+                for user_id, transaction_id in debited:
+                    await self._refund_player(
+                        session,
+                        user_id,
+                        "truco_failed_start",
+                        idempotency_key=(
+                            f"truco:debit:{transaction_id}:refund"
+                        ),
+                    )
+                session.economic_policy_snapshots = {}
+                if isinstance(exc, ValueError):
+                    raise TrucoValidationError(
+                        f"<@{player.user_id}> não possui saldo suficiente."
+                    ) from exc
+                raise
 
     async def _pay_winners(self, session: TrucoSession, winner: TrucoTeam) -> None:
         winners = session.team_players(winner)
@@ -597,31 +631,32 @@ class TrucoService:
             settings = await self._economy_repository.get_guild_settings(
                 session.guild_id
             )
-            payout = await apply_daily_casino_profit_cap(
-                self._economy_repository,
+            decision = await self._economic_policy.decision_for_settlement(
+                session.economic_policy_snapshots.get(player.user_id),
                 settings,
+                guild_id=session.guild_id,
+                user_id=player.user_id,
+                game="truco",
+                stake=session.stake,
+            )
+            await self._economic_policy.settle_payout(
+                decision,
                 guild_id=session.guild_id,
                 user_id=player.user_id,
                 stake=session.stake,
                 payout=payout_per_winner,
+                transaction_type=EconomyTransactionType.CASINO_PAYOUT,
+                reason="truco_payout",
+                metadata={
+                    "game": "truco",
+                    "game_id": session.id,
+                    "team": winner.value,
+                    "payout": payout_per_winner,
+                    "uncapped_payout": payout_per_winner,
+                    "outcome": "WON",
+                },
+                idempotency_key=f"truco:{session.id}:{player.user_id}",
             )
-            if payout > 0:
-                await self._economy_repository.mutate_balance(
-                    guild_id=session.guild_id,
-                    user_id=player.user_id,
-                    amount=payout,
-                    transaction_type=EconomyTransactionType.CASINO_PAYOUT,
-                    actor_id=None,
-                    reason="truco_payout",
-                    metadata={
-                        "game": "truco",
-                        "game_id": session.id,
-                        "team": winner.value,
-                        "payout": payout,
-                        "uncapped_payout": payout_per_winner,
-                        "outcome": "WON",
-                    },
-                )
             await self._economy_repository.apply_credit_protection(
                 guild_id=session.guild_id,
                 user_id=player.user_id,
@@ -629,6 +664,7 @@ class TrucoService:
                 stake=session.stake,
                 is_loss=False,
                 metadata={"source": "truco", "game_id": session.id},
+                idempotency_key=f"truco:{session.id}:{player.user_id}:credit",
             )
             await self._unlock_progress(session.guild_id, player.user_id, won=True)
 
@@ -642,6 +678,7 @@ class TrucoService:
                 stake=session.stake,
                 is_loss=True,
                 metadata={"source": "truco", "game_id": session.id},
+                idempotency_key=f"truco:{session.id}:{player.user_id}:credit",
             )
             await self._unlock_progress(session.guild_id, player.user_id, won=False)
 
@@ -656,6 +693,8 @@ class TrucoService:
         session: TrucoSession,
         user_id: int,
         reason: str,
+        *,
+        idempotency_key: str | None = None,
     ) -> None:
         await self._economy_repository.mutate_balance(
             guild_id=session.guild_id,
@@ -665,6 +704,9 @@ class TrucoService:
             actor_id=None,
             reason=reason,
             metadata={"game": "truco", "game_id": session.id, "stake": session.stake},
+            idempotency_key=(
+                idempotency_key or f"truco:{session.id}:{user_id}:refund"
+            ),
         )
 
     async def _unlock_progress(self, guild_id: int, user_id: int, *, won: bool) -> None:
@@ -826,17 +868,13 @@ class TrucoService:
 
     async def _validate_daily_profit_limit(self, guild_id: int, user_id: int) -> None:
         settings = await self._economy_repository.get_guild_settings(guild_id)
-        if (
-            not settings.casino_limiters_enabled
-            or settings.casino_daily_profit_limit <= 0
-        ):
-            return
-        current_profit = await self._economy_repository.get_user_casino_profit_since(
-            guild_id,
-            user_id,
-            current_daily_profit_window_start(),
+        decision = await self._economic_policy.select(
+            settings,
+            guild_id=guild_id,
+            user_id=user_id,
+            game="truco",
         )
-        if current_profit >= settings.casino_daily_profit_limit:
+        if decision.limiters_apply and decision.daily_profit >= decision.daily_limit:
             raise TrucoValidationError("Você atingiu o teto diário de lucro dos jogos.")
 
     @classmethod

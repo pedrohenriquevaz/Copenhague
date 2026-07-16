@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from app.models.casino import RaceMascot
 from app.models.economy import UserWallet
@@ -161,6 +162,7 @@ class CollectiveRaceBetCreate:
     stake: int
     potential_payout: int
     debit_transaction_id: int
+    economic_policy_snapshot: dict[str, Any]
     created_at: datetime
 
 
@@ -178,6 +180,7 @@ class CollectiveRaceBet:
     status: CollectiveRaceBetStatus
     debit_transaction_id: int | None
     payout_transaction_id: int | None
+    economic_policy_snapshot: dict[str, Any] | None
     created_at: datetime
     settled_at: datetime | None
 

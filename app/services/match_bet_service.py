@@ -17,7 +17,8 @@ from app.models.match_bet import (
 )
 from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.match_bet_repository import MatchBetRepositoryProtocol
-from app.services.economy_limits import apply_daily_casino_profit_cap
+from app.services.economic_tier_service import EconomicTierService
+from app.services.economy_limits import EconomicDifficultyPolicyService
 
 
 class MatchBetServiceError(Exception):
@@ -39,9 +40,14 @@ class MatchBetService:
         self,
         repository: MatchBetRepositoryProtocol,
         economy_repository: EconomyRepositoryProtocol,
+        *,
+        economic_policy: EconomicDifficultyPolicyService | None = None,
     ) -> None:
         self._repository = repository
         self._economy_repository = economy_repository
+        self._economic_policy = economic_policy or EconomicDifficultyPolicyService(
+            economy_repository, EconomicTierService()
+        )
         self._lock = asyncio.Lock()
 
     async def create_match(
@@ -121,6 +127,12 @@ class MatchBetService:
             team_name = self.team_name(match, selected_team)
             odd_bps = self.team_odd_bps(match, selected_team)
             potential_payout = self.calculate_payout(stake, odd_bps)
+            economic_decision = await self._economic_policy.select(
+                settings,
+                guild_id=guild_id,
+                user_id=user_id,
+                game="match_bet",
+            )
 
             try:
                 debit = await self._economy_repository.mutate_balance(
@@ -155,6 +167,9 @@ class MatchBetService:
                         odd_bps=odd_bps,
                         potential_payout=potential_payout,
                         debit_transaction_id=debit.transaction.id,
+                        economic_policy_snapshot=self._economic_policy.snapshot(
+                            economic_decision
+                        ),
                         created_at=utc_now(),
                     )
                 )
@@ -166,6 +181,9 @@ class MatchBetService:
                     match_id=match.id,
                     ticket_id=None,
                     reason="match_bet_failed_refund",
+                    idempotency_key=(
+                        f"match_bet:transaction:{debit.transaction.id}:refund"
+                    ),
                 )
                 raise MatchBetValidationError(str(exc)) from exc
             except Exception:
@@ -176,6 +194,9 @@ class MatchBetService:
                     match_id=match.id,
                     ticket_id=None,
                     reason="match_bet_failed_refund",
+                    idempotency_key=(
+                        f"match_bet:transaction:{debit.transaction.id}:refund"
+                    ),
                 )
                 raise
 
@@ -216,8 +237,10 @@ class MatchBetService:
 
         async with self._lock:
             match = await self._require_match(guild_id, match_id)
-            if not match.is_active:
-                raise MatchBetValidationError("Esta partida ja foi encerrada.")
+            if not match.is_active and match.resolved_winner is not winning_team:
+                raise MatchBetValidationError(
+                    "Esta partida ja foi encerrada com outro resultado."
+                )
 
             settled_match, tickets = await self._repository.settle_match(
                 match_id,
@@ -231,10 +254,9 @@ class MatchBetService:
             total_cashback = 0
             for ticket in tickets:
                 if ticket.status is MatchBetTicketStatus.WON:
-                    if ticket.payout_transaction_id is not None:
-                        continue
-                    transaction_id, paid_amount = await self._pay_ticket(ticket)
-                    if transaction_id is not None:
+                    paid_amount = 0
+                    if ticket.payout_transaction_id is None:
+                        transaction_id, paid_amount = await self._pay_ticket(ticket)
                         await self._repository.mark_ticket_paid(
                             ticket.id,
                             transaction_id=transaction_id,
@@ -251,6 +273,7 @@ class MatchBetService:
                             "match_id": ticket.match_id,
                             "ticket_id": ticket.id,
                         },
+                        idempotency_key=f"match_bet:{ticket.id}:credit",
                     )
                 elif ticket.status is MatchBetTicketStatus.LOST:
                     credit = await self._economy_repository.apply_credit_protection(
@@ -265,6 +288,7 @@ class MatchBetService:
                             "ticket_id": ticket.id,
                             "team": ticket.team.value,
                         },
+                        idempotency_key=f"match_bet:{ticket.id}:credit",
                     )
                     total_cashback += credit.cashback_amount
                 elif ticket.status is MatchBetTicketStatus.REFUNDED:
@@ -277,6 +301,7 @@ class MatchBetService:
                         match_id=ticket.match_id,
                         ticket_id=ticket.id,
                         reason="match_bet_cancel_refund",
+                        idempotency_key=f"match_bet:{ticket.id}:refund",
                     )
                     await self._repository.mark_ticket_paid(
                         ticket.id,
@@ -303,36 +328,37 @@ class MatchBetService:
             total_cashback=total_cashback,
         )
 
-    async def _pay_ticket(self, ticket: MatchBetTicket) -> tuple[int | None, int]:
+    async def _pay_ticket(self, ticket: MatchBetTicket) -> tuple[int, int]:
         settings = await self._economy_repository.get_guild_settings(ticket.guild_id)
-        payout = await apply_daily_casino_profit_cap(
-            self._economy_repository,
+        decision = await self._economic_policy.decision_for_settlement(
+            ticket.economic_policy_snapshot,
             settings,
+            guild_id=ticket.guild_id,
+            user_id=ticket.user_id,
+            game="match_bet",
+            stake=ticket.stake,
+        )
+        settlement = await self._economic_policy.settle_payout(
+            decision,
             guild_id=ticket.guild_id,
             user_id=ticket.user_id,
             stake=ticket.stake,
             payout=ticket.potential_payout,
-        )
-        if payout <= 0:
-            return None, 0
-        result = await self._economy_repository.mutate_balance(
-            guild_id=ticket.guild_id,
-            user_id=ticket.user_id,
-            amount=payout,
             transaction_type=EconomyTransactionType.MATCH_BET_PAYOUT,
-            actor_id=None,
             reason="match_bet_payout",
             metadata={
+                "game": "match_bet",
                 "match_id": ticket.match_id,
                 "ticket_id": ticket.id,
                 "team": ticket.team.value,
                 "odd": self.format_odd_bps(ticket.odd_bps),
                 "stake": ticket.stake,
-                "payout": payout,
+                "payout": ticket.potential_payout,
                 "uncapped_payout": ticket.potential_payout,
             },
+            idempotency_key=f"match_bet:{ticket.id}",
         )
-        return result.transaction.id, payout
+        return settlement.transaction.id, settlement.paid_payout
 
     async def _refund_stake(
         self,
@@ -343,6 +369,7 @@ class MatchBetService:
         match_id: int,
         ticket_id: int | None,
         reason: str,
+        idempotency_key: str | None = None,
     ) -> int:
         result = await self._economy_repository.mutate_balance(
             guild_id=guild_id,
@@ -356,6 +383,7 @@ class MatchBetService:
                 "ticket_id": ticket_id,
                 "source": "match_bet",
             },
+            idempotency_key=idempotency_key,
         )
         return result.transaction.id
 

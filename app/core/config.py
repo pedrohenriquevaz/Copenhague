@@ -26,6 +26,7 @@ class Settings:
     POSTGRES_SCHEMA: str
     POSTGRES_POOL_MIN_SIZE: int
     POSTGRES_POOL_MAX_SIZE: int
+    ECONOMIC_DIFFICULTY_THRESHOLD_BPS: int
     ENABLE_MEMBERS_INTENT: bool
     ENABLE_MESSAGE_CONTENT_INTENT: bool
 
@@ -69,6 +70,13 @@ class Settings:
                 1,
                 int(env.get("POSTGRES_POOL_MAX_SIZE", "10")),
             ),
+            ECONOMIC_DIFFICULTY_THRESHOLD_BPS=_get_bounded_int(
+                env,
+                "ECONOMIC_DIFFICULTY_THRESHOLD_BPS",
+                7_000,
+                minimum=1,
+                maximum=8_999,
+            ),
             ENABLE_MEMBERS_INTENT=_get_bool(env, "ENABLE_MEMBERS_INTENT", False),
             ENABLE_MESSAGE_CONTENT_INTENT=_get_bool(
                 env,
@@ -103,6 +111,20 @@ def _get_positive_float(
     value = float(environ.get(key, str(default)))
     if value <= 0:
         raise ValueError(f"{key} precisa ser maior que zero.")
+    return value
+
+
+def _get_bounded_int(
+    environ: Mapping[str, str],
+    key: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = int(environ.get(key, str(default)))
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{key} precisa ficar entre {minimum} e {maximum}.")
     return value
 
 

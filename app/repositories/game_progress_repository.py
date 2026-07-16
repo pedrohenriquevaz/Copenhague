@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Protocol
 
 from app.models.casino import RaceMascot
@@ -389,6 +390,7 @@ class _GameProgressRepositoryImplementation:
                         status TEXT NOT NULL,
                         debit_transaction_id INTEGER,
                         payout_transaction_id INTEGER,
+                        economic_policy_json TEXT,
                         created_at TEXT NOT NULL,
                         settled_at TEXT,
                         FOREIGN KEY(race_id) REFERENCES collective_races(id)
@@ -396,6 +398,12 @@ class _GameProgressRepositoryImplementation:
                         UNIQUE(race_id, user_id)
                     )
                     """)
+                self._ensure_column(
+                    connection,
+                    "collective_race_bets",
+                    "economic_policy_json",
+                    "TEXT",
+                )
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_collective_races_open
                     ON collective_races(guild_id, status, closes_at)
@@ -950,9 +958,10 @@ class _GameProgressRepositoryImplementation:
                             status,
                             debit_transaction_id,
                             payout_transaction_id,
+                            economic_policy_json,
                             created_at,
                             settled_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
                         """,
                         (
                             data.race_id,
@@ -963,6 +972,11 @@ class _GameProgressRepositoryImplementation:
                             data.potential_payout,
                             CollectiveRaceBetStatus.OPEN.value,
                             data.debit_transaction_id,
+                            json.dumps(
+                                data.economic_policy_snapshot,
+                                ensure_ascii=True,
+                                allow_nan=False,
+                            ),
                             serialize_datetime(data.created_at),
                         ),
                     )
@@ -1314,6 +1328,11 @@ class _GameProgressRepositoryImplementation:
             payout_transaction_id=(
                 int(row["payout_transaction_id"])
                 if row["payout_transaction_id"] is not None
+                else None
+            ),
+            economic_policy_snapshot=(
+                json.loads(str(row["economic_policy_json"]))
+                if row.get("economic_policy_json") is not None
                 else None
             ),
             created_at=parse_datetime(str(row["created_at"])),

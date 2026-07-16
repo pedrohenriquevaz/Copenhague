@@ -21,11 +21,11 @@ from app.models.casino import (
 from app.models.economy import EconomyTransaction, EconomyTransactionType, UserWallet
 from app.models.guild_settings import GuildEconomySettings
 from app.repositories.economy_protocol import EconomyRepositoryProtocol
+from app.services.economic_tier_service import EconomicTierService
 from app.services.economy_limits import (
     PROFIT_DIFFICULTY_ROLL_MAX,
-    apply_daily_casino_profit_cap,
-    calculate_daily_profit_difficulty_bps,
-    current_daily_profit_window_start,
+    EconomicDifficultyDecision,
+    EconomicDifficultyPolicyService,
 )
 from app.services.game_progress_service import GameProgressService
 
@@ -74,11 +74,15 @@ class CasinoService:
         progress_service: GameProgressService | None = None,
         rng: random.Random | random.SystemRandom | None = None,
         cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS,
+        economic_policy: EconomicDifficultyPolicyService | None = None,
     ) -> None:
         self._repository = repository
         self._progress_service = progress_service
         self._rng = rng or random.SystemRandom()
         self._cooldown_seconds = cooldown_seconds
+        self._economic_policy = economic_policy or EconomicDifficultyPolicyService(
+            repository, EconomicTierService()
+        )
         self._cooldowns: dict[tuple[int, int, CasinoGameType], datetime] = {}
         self._lock = asyncio.Lock()
 
@@ -91,10 +95,12 @@ class CasinoService:
         choice: str,
     ) -> CasinoGameResult:
         selected = self._parse_coin_side(choice)
-        difficulty_bps = await self._daily_profit_difficulty_bps(guild_id, user_id)
+        economic_decision = await self._daily_profit_decision(
+            guild_id, user_id, CasinoGameType.COIN_FLIP.value
+        )
         result = self._rng.choice(list(CoinSide))
         won = selected is result
-        if won and self._blocked_by_profit_difficulty(difficulty_bps):
+        if won and self._blocked_by_profit_difficulty(economic_decision.difficulty_bps):
             result = self._opposite_coin_side(selected)
             won = False
         payout = self._percent_payout(bet, self.COIN_FLIP_PAYOUT_PERCENT) if won else 0
@@ -113,6 +119,7 @@ class CasinoService:
                 f"Escolha: {selected.value.title()}",
                 f"Resultado: {result.value.title()}",
             ],
+            economic_decision=economic_decision,
         )
 
     async def play_dice(
@@ -125,14 +132,16 @@ class CasinoService:
         value: int | None = None,
     ) -> CasinoGameResult:
         dice_mode = self._parse_dice_mode(mode)
-        difficulty_bps = await self._daily_profit_difficulty_bps(guild_id, user_id)
+        economic_decision = await self._daily_profit_decision(
+            guild_id, user_id, CasinoGameType.DICE.value
+        )
         roll = self._rng.randint(1, 6)
         won, multiplier_percent, choice_label = self._resolve_dice_bet(
             dice_mode,
             roll,
             value,
         )
-        if won and self._blocked_by_profit_difficulty(difficulty_bps):
+        if won and self._blocked_by_profit_difficulty(economic_decision.difficulty_bps):
             roll = self._losing_dice_roll(dice_mode, value)
             won, multiplier_percent, choice_label = self._resolve_dice_bet(
                 dice_mode,
@@ -156,6 +165,7 @@ class CasinoService:
                 f"Aposta: {choice_label}",
                 f"Resultado: {roll}",
             ],
+            economic_decision=economic_decision,
         )
 
     async def play_slot(
@@ -165,11 +175,13 @@ class CasinoService:
         user_id: int,
         bet: int,
     ) -> CasinoGameResult:
-        difficulty_bps = await self._daily_profit_difficulty_bps(guild_id, user_id)
+        economic_decision = await self._daily_profit_decision(
+            guild_id, user_id, CasinoGameType.SLOT.value
+        )
         symbols = [self._rng.choice(SLOT_SYMBOLS) for _ in range(3)]
         payout, outcome, result_label = self._resolve_slot(symbols, bet)
         if outcome is CasinoOutcome.WON and self._blocked_by_profit_difficulty(
-            difficulty_bps,
+            economic_decision.difficulty_bps,
         ):
             symbols = self._losing_slot_symbols()
             payout, outcome, result_label = self._resolve_slot(symbols, bet)
@@ -186,6 +198,7 @@ class CasinoService:
             detail_lines=[
                 "Resultado: " + " | ".join(symbol.label for symbol in symbols),
             ],
+            economic_decision=economic_decision,
         )
 
     async def play_roulette(
@@ -197,10 +210,12 @@ class CasinoService:
         color: str,
     ) -> CasinoGameResult:
         selected = self._parse_roulette_color(color)
-        difficulty_bps = await self._daily_profit_difficulty_bps(guild_id, user_id)
+        economic_decision = await self._daily_profit_decision(
+            guild_id, user_id, CasinoGameType.ROULETTE.value
+        )
         result = self._draw_roulette_color()
         won = selected is result
-        if won and self._blocked_by_profit_difficulty(difficulty_bps):
+        if won and self._blocked_by_profit_difficulty(economic_decision.difficulty_bps):
             result = self._losing_roulette_color(selected)
             won = False
         multiplier = 10 if result is RouletteColor.VERDE else 2
@@ -220,6 +235,7 @@ class CasinoService:
                 f"Cor escolhida: {self._format_roulette_color(selected)}",
                 f"Resultado: {self._format_roulette_color(result)}",
             ],
+            economic_decision=economic_decision,
         )
 
     async def play_mascot_race(
@@ -231,10 +247,12 @@ class CasinoService:
         mascot: str,
     ) -> CasinoGameResult:
         selected = self._parse_race_mascot(mascot)
-        difficulty_bps = await self._daily_profit_difficulty_bps(guild_id, user_id)
+        economic_decision = await self._daily_profit_decision(
+            guild_id, user_id, CasinoGameType.MASCOT_RACE.value
+        )
         winner = self._rng.choice(list(RaceMascot))
         won = selected is winner
-        if won and self._blocked_by_profit_difficulty(difficulty_bps):
+        if won and self._blocked_by_profit_difficulty(economic_decision.difficulty_bps):
             winner = self._losing_race_mascot(selected)
             won = False
         payout = bet * 5 if won else 0
@@ -253,6 +271,7 @@ class CasinoService:
                 f"Sua aposta: {self._format_race_mascot(selected)}",
                 f"Vencedor: {self._format_race_mascot(winner)}",
             ],
+            economic_decision=economic_decision,
         )
 
     async def validate_duel_challenge(
@@ -299,8 +318,12 @@ class CasinoService:
                 settings.casino_min_bet_duel,
                 settings.casino_max_bet,
             )
-            await self._validate_daily_profit_limit(settings, guild_id, challenger_id)
-            await self._validate_daily_profit_limit(settings, guild_id, challenged_id)
+            challenger_decision = await self._validate_daily_profit_limit(
+                settings, guild_id, challenger_id, game=CasinoGameType.DUEL.value
+            )
+            challenged_decision = await self._validate_daily_profit_limit(
+                settings, guild_id, challenged_id, game=CasinoGameType.DUEL.value
+            )
             self._validate_not_on_cooldown(guild_id, challenger_id, CasinoGameType.DUEL)
             self._validate_not_on_cooldown(guild_id, challenged_id, CasinoGameType.DUEL)
             await self._require_wallet_balance(guild_id, challenger_id, bet)
@@ -329,6 +352,7 @@ class CasinoService:
                     bet,
                     bet,
                     CasinoOutcome.DRAW,
+                    challenger_decision,
                 )
                 challenged_wallet, _ = await self._pay_out(
                     guild_id,
@@ -337,6 +361,7 @@ class CasinoService:
                     bet,
                     bet,
                     CasinoOutcome.DRAW,
+                    challenged_decision,
                 )
                 challenger_credit = await self._repository.apply_credit_protection(
                     guild_id=guild_id,
@@ -363,6 +388,11 @@ class CasinoService:
                     bet,
                     payout,
                     CasinoOutcome.WON,
+                    (
+                        challenger_decision
+                        if winner_id == challenger_id
+                        else challenged_decision
+                    ),
                 )
                 loser_id = (
                     challenged_id if winner_id == challenger_id else challenger_id
@@ -522,9 +552,12 @@ class CasinoService:
         title: str,
         result_label: str,
         detail_lines: list[str],
+        economic_decision: EconomicDifficultyDecision,
     ) -> CasinoGameResult:
         async with self._lock:
-            await self._validate_can_play(guild_id, user_id, game_type, bet)
+            await self._validate_can_play(
+                guild_id, user_id, game_type, bet, economic_decision
+            )
             debit_wallet = await self._debit_bet(guild_id, user_id, game_type, bet)
             wallet = debit_wallet
             if payout > 0:
@@ -535,6 +568,7 @@ class CasinoService:
                     bet,
                     payout,
                     outcome,
+                    economic_decision,
                 )
             credit = await self._repository.apply_credit_protection(
                 guild_id=guild_id,
@@ -646,6 +680,7 @@ class CasinoService:
         user_id: int,
         game_type: CasinoGameType,
         bet: int,
+        economic_decision: EconomicDifficultyDecision,
     ) -> None:
         settings = await self._repository.get_guild_settings(guild_id)
         self._validate_bet(
@@ -653,7 +688,7 @@ class CasinoService:
             self._min_bet_for_game(settings, game_type),
             settings.casino_max_bet,
         )
-        await self._validate_daily_profit_limit(settings, guild_id, user_id)
+        self._raise_if_profit_limit_reached(economic_decision)
         self._validate_not_on_cooldown(guild_id, user_id, game_type)
 
         wallet = await self._repository.get_wallet(guild_id, user_id)
@@ -730,69 +765,68 @@ class CasinoService:
         bet: int,
         payout: int,
         outcome: CasinoOutcome,
+        economic_decision: EconomicDifficultyDecision,
     ) -> tuple[UserWallet, int]:
-        settings = await self._repository.get_guild_settings(guild_id)
-        capped_payout = await apply_daily_casino_profit_cap(
-            self._repository,
-            settings,
+        settlement = await self._economic_policy.settle_payout(
+            economic_decision,
             guild_id=guild_id,
             user_id=user_id,
             stake=bet,
             payout=payout,
-        )
-        if capped_payout <= 0:
-            return await self._repository.get_wallet(guild_id, user_id), 0
-        result = await self._repository.mutate_balance(
-            guild_id=guild_id,
-            user_id=user_id,
-            amount=capped_payout,
             transaction_type=EconomyTransactionType.CASINO_PAYOUT,
-            actor_id=None,
             reason=f"{game_type.value}_payout",
             metadata={
                 "game": game_type.value,
                 "bet": bet,
-                "payout": capped_payout,
+                "payout": payout,
                 "uncapped_payout": payout,
                 "outcome": outcome.value,
             },
         )
-        return result.wallet, capped_payout
+        return settlement.wallet, settlement.paid_payout
 
     async def _validate_daily_profit_limit(
         self,
         settings: GuildEconomySettings,
         guild_id: int,
         user_id: int,
+        *,
+        game: str = "casino",
+    ) -> EconomicDifficultyDecision:
+        decision = await self._economic_policy.select(
+            settings,
+            guild_id=guild_id,
+            user_id=user_id,
+            game=game,
+        )
+        self._raise_if_profit_limit_reached(decision)
+        return decision
+
+    async def _daily_profit_decision(
+        self,
+        guild_id: int,
+        user_id: int,
+        game: str,
+    ) -> EconomicDifficultyDecision:
+        settings = await self._repository.get_guild_settings(guild_id)
+        return await self._economic_policy.select(
+            settings,
+            guild_id=guild_id,
+            user_id=user_id,
+            game=game,
+        )
+
+    @staticmethod
+    def _raise_if_profit_limit_reached(
+        decision: EconomicDifficultyDecision,
     ) -> None:
         if (
-            not settings.casino_limiters_enabled
-            or settings.casino_daily_profit_limit <= 0
+            decision.profit_cap_applies
+            and decision.daily_profit >= decision.daily_limit
         ):
-            return
-        current_profit = await self._repository.get_user_casino_profit_since(
-            guild_id,
-            user_id,
-            current_daily_profit_window_start(),
-        )
-        if current_profit >= settings.casino_daily_profit_limit:
             raise CasinoValidationError(
                 "Voce atingiu o teto diario de lucro dos jogos."
             )
-
-    async def _daily_profit_difficulty_bps(self, guild_id: int, user_id: int) -> int:
-        settings = await self._repository.get_guild_settings(guild_id)
-        if (
-            not settings.casino_limiters_enabled
-            or settings.casino_daily_profit_limit <= 0
-        ):
-            return 0
-        current_profit = await self._repository.get_user_casino_profit_since(
-            guild_id,
-            user_id,
-            current_daily_profit_window_start(),
-        )
-        return calculate_daily_profit_difficulty_bps(current_profit, settings)
 
     def _blocked_by_profit_difficulty(self, difficulty_bps: int) -> bool:
         if difficulty_bps <= 0:

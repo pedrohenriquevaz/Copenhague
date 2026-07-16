@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.models.economy import EconomyTransactionType
-from app.models.match_bet import MatchBetTicketStatus
+from app.models.match_bet import MatchBetTeam, MatchBetTicketStatus
 from app.services.match_bet_service import MatchBetService, MatchBetValidationError
 from tests.postgres_support import PostgresEconomyRepository, PostgresMatchBetRepository
 
@@ -63,6 +63,81 @@ async def test_match_bet_locks_odds_and_pays_multiple_tickets(
     assert result.winning_tickets == 2
     assert result.total_paid == 400
     assert wallet.balance == 1200
+
+
+async def test_match_bet_persists_policy_snapshot_across_service_reload(
+    tmp_path: Path,
+) -> None:
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    await economy.update_guild_settings(1, {"casino_daily_profit_limit": 30})
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
+    service = MatchBetService(repository, economy)
+    await _seed_wallet(economy, balance=25_001)
+    match = await service.create_match(
+        guild_id=1,
+        title="Final",
+        team_1="A",
+        team_2="B",
+        odd_team_1=2,
+        odd_team_2=2,
+        created_by=99,
+    )
+    placement = await service.place_bet(
+        guild_id=1,
+        user_id=10,
+        match_id=match.id,
+        team="team_1",
+        stake=100,
+    )
+
+    reloaded_repository = PostgresMatchBetRepository(tmp_path / "bets.db")
+    result = await MatchBetService(reloaded_repository, economy).settle_match(
+        guild_id=1,
+        match_id=match.id,
+        winner="team_1",
+    )
+
+    assert placement.ticket.economic_policy_snapshot is not None
+    assert placement.ticket.economic_policy_snapshot["tier"]["identifier"] == (
+        "prosperous"
+    )
+    assert result.total_paid == 130
+    assert (await economy.get_wallet(1, 10)).balance == 25_031
+
+
+async def test_match_bet_resumes_financial_settlement_after_interruption(
+    tmp_path: Path,
+) -> None:
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    repository = PostgresMatchBetRepository(tmp_path / "bets.db")
+    service = MatchBetService(repository, economy)
+    await _seed_wallet(economy, balance=1_000)
+    match = await service.create_match(
+        guild_id=1,
+        title="Final",
+        team_1="A",
+        team_2="B",
+        odd_team_1=2,
+        odd_team_2=2,
+        created_by=99,
+    )
+    await service.place_bet(
+        guild_id=1,
+        user_id=10,
+        match_id=match.id,
+        team="team_1",
+        stake=100,
+    )
+    await repository.settle_match(match.id, winner=MatchBetTeam.TEAM_1)
+
+    result = await MatchBetService(repository, economy).settle_match(
+        guild_id=1,
+        match_id=match.id,
+        winner="team_1",
+    )
+
+    assert result.total_paid == 200
+    assert (await economy.get_wallet(1, 10)).balance == 1_100
 
 
 async def test_match_bet_insufficient_balance_does_not_create_ticket(

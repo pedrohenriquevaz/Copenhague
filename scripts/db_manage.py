@@ -37,6 +37,7 @@ TABLE_MANIFEST: tuple[TableSpec, ...] = (
     TableSpec("activity_claim_cursors"),
     TableSpec("economy_reward_claims"),
     TableSpec("economy_transactions", True),
+    TableSpec("economy_effect_claims"),
     TableSpec("shop_level_configs"),
     TableSpec("user_level_upgrades", True),
     TableSpec("native_message_stats"),
@@ -65,6 +66,9 @@ TABLE_MANIFEST: tuple[TableSpec, ...] = (
     TableSpec("giveaway_codes", True),
     TableSpec("giveaway_claims", True),
     TableSpec("giveaway_user_tickets"),
+    TableSpec("moderation_settings"),
+    TableSpec("moderation_authorized_roles"),
+    TableSpec("moderation_cases", True),
 )
 
 
@@ -259,10 +263,42 @@ def validate_schema(connection: Any) -> None:
     missing_tables = find_missing_tables(connection)
     if missing_tables:
         raise RuntimeError("Tabelas ausentes: " + ", ".join(missing_tables))
+    missing_columns = find_missing_columns(connection)
+    if missing_columns:
+        raise RuntimeError("Colunas ausentes: " + ", ".join(missing_columns))
     missing_indexes = find_missing_indexes(connection)
     if missing_indexes:
         raise RuntimeError("Indices ausentes: " + ", ".join(missing_indexes))
     validate_sequences(connection)
+
+
+EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "economy_transactions": ("idempotency_key",),
+    "collective_race_bets": ("economic_policy_json",),
+    "match_bet_tickets": ("economic_policy_json",),
+    "moderation_settings": ("log_channel_id",),
+    "moderation_cases": ("duration_seconds", "metadata"),
+}
+
+
+def find_missing_columns(connection: Any) -> list[str]:
+    missing: list[str] = []
+    with connection.cursor() as cursor:
+        for table_name, column_names in EXPECTED_COLUMNS.items():
+            for column_name in column_names:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = %s
+                      AND column_name = %s
+                    """,
+                    (table_name, column_name),
+                )
+                if cursor.fetchone() is None:
+                    missing.append(f"{table_name}.{column_name}")
+    return missing
 
 
 def find_missing_tables(connection: Any) -> list[str]:
@@ -285,6 +321,7 @@ def find_missing_tables(connection: Any) -> list[str]:
 
 EXPECTED_INDEXES = (
     "idx_economy_transactions_guild_user_created",
+    "idx_economy_transactions_idempotency",
     "idx_economy_reward_claims_user",
     "idx_user_credit_protection_guild",
     "idx_user_savings_accounts_guild",
@@ -303,6 +340,8 @@ EXPECTED_INDEXES = (
     "idx_uno_games_channel",
     "idx_uno_games_message",
     "idx_uno_actions_game",
+    "idx_moderation_cases_guild_created",
+    "idx_moderation_cases_guild_target",
     "idx_collective_races_open",
     "idx_collective_race_bets_race",
     "idx_match_bet_matches_active",

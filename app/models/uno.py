@@ -156,6 +156,7 @@ class UnoSession:
     stake: int = 0
     game_mode: UnoGameMode = UnoGameMode.PVP
     stakes_debited: bool = False
+    economic_policy_snapshots: dict[int, dict[str, Any]] = field(default_factory=dict)
     draw_pile: list[UnoCard] = field(default_factory=list)
     discard_pile: list[UnoCard] = field(default_factory=list)
     current_player_index: int = 0
@@ -215,6 +216,10 @@ class UnoSession:
             "stake": self.stake,
             "game_mode": self.game_mode.value,
             "stakes_debited": self.stakes_debited,
+            "economic_policy_snapshots": {
+                str(user_id): snapshot
+                for user_id, snapshot in self.economic_policy_snapshots.items()
+            },
             "draw_pile": [card.to_dict() for card in self.draw_pile],
             "discard_pile": [card.to_dict() for card in self.discard_pile],
             "current_player_index": self.current_player_index,
@@ -245,6 +250,12 @@ class UnoSession:
             stake=int(data.get("stake", 0)),
             game_mode=UnoGameMode(str(data.get("game_mode", "PVP"))),
             stakes_debited=bool(data.get("stakes_debited", False)),
+            economic_policy_snapshots={
+                int(user_id): dict(snapshot)
+                for user_id, snapshot in data.get(
+                    "economic_policy_snapshots", {}
+                ).items()
+            },
             draw_pile=[UnoCard.from_dict(item) for item in data.get("draw_pile", [])],
             discard_pile=[
                 UnoCard.from_dict(item) for item in data.get("discard_pile", [])

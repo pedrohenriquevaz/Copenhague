@@ -308,7 +308,7 @@ async def test_casino_uses_configured_min_bet_per_game(tmp_path: Path) -> None:
 async def test_casino_caps_daily_profit(tmp_path: Path) -> None:
     repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await repository.update_guild_settings(1, {"casino_daily_profit_limit": 30})
-    await _seed_wallet(repository, balance=1000)
+    await _seed_wallet(repository, balance=30000)
     service = CasinoService(
         repository,
         rng=FixedRng(choices=[CoinSide.CARA, CoinSide.CARA]),
@@ -325,7 +325,7 @@ async def test_casino_caps_daily_profit(tmp_path: Path) -> None:
 
     assert result.payout == 130
     assert result.profit == 30
-    assert wallet.balance == 1030
+    assert wallet.balance == 30030
     with pytest.raises(CasinoValidationError, match="teto diario"):
         await service.play_coin_flip(
             guild_id=1,
@@ -335,12 +335,45 @@ async def test_casino_caps_daily_profit(tmp_path: Path) -> None:
         )
 
 
+async def test_casino_keeps_pre_bet_tier_when_debit_crosses_boundary(
+    tmp_path: Path,
+) -> None:
+    repository = PostgresEconomyRepository(tmp_path / "economy.db")
+    await repository.update_guild_settings(1, {"casino_daily_profit_limit": 30})
+    await _seed_wallet(repository, balance=25_001)
+    service = CasinoService(
+        repository,
+        rng=FixedRng(choices=[CoinSide.CARA]),
+        cooldown_seconds=0,
+    )
+
+    result = await service.play_coin_flip(
+        guild_id=1,
+        user_id=10,
+        bet=100,
+        choice="cara",
+    )
+    transactions = await repository.list_transactions(1, 10, limit=10)
+    payout = next(
+        item
+        for item in transactions
+        if item.type is EconomyTransactionType.CASINO_PAYOUT
+    )
+
+    assert result.payout == 130
+    assert result.wallet.balance == 25_031
+    assert payout.amount == 130
+    assert payout.metadata["payout"] == 130
+    assert payout.metadata["requested_payout"] == 140
+    assert payout.metadata["economic_tier"] == "prosperous"
+
+
 async def test_casino_profit_pressure_can_downgrade_coin_flip_win(
     tmp_path: Path,
 ) -> None:
     repository = PostgresEconomyRepository(tmp_path / "economy.db")
     await repository.update_guild_settings(1, {"casino_daily_profit_limit": 5000})
-    await _seed_wallet(repository, balance=10000)
+    await _seed_wallet(repository, balance=30000)
     await repository.mutate_balance(
         guild_id=1,
         user_id=10,
@@ -353,7 +386,7 @@ async def test_casino_profit_pressure_can_downgrade_coin_flip_win(
     await repository.mutate_balance(
         guild_id=1,
         user_id=10,
-        amount=2600,
+        amount=3600,
         transaction_type=EconomyTransactionType.CASINO_PAYOUT,
         actor_id=None,
         reason="previous_payout",
@@ -375,7 +408,7 @@ async def test_casino_profit_pressure_can_downgrade_coin_flip_win(
     assert result.outcome is CasinoOutcome.LOST
     assert result.result_label == "Coroa"
     assert result.payout == 0
-    assert result.wallet.balance == 12400
+    assert result.wallet.balance == 33400
 
 
 async def test_casino_limiters_can_be_disabled(tmp_path: Path) -> None:
@@ -387,7 +420,7 @@ async def test_casino_limiters_can_be_disabled(tmp_path: Path) -> None:
             "casino_limiters_enabled": 0,
         },
     )
-    await _seed_wallet(repository, balance=10000)
+    await _seed_wallet(repository, balance=30000)
     await repository.mutate_balance(
         guild_id=1,
         user_id=10,
@@ -422,7 +455,7 @@ async def test_casino_limiters_can_be_disabled(tmp_path: Path) -> None:
     assert result.outcome is CasinoOutcome.WON
     assert result.result_label == "Cara"
     assert result.payout == 140
-    assert result.wallet.balance == 12540
+    assert result.wallet.balance == 32540
 
 
 async def test_casino_cooldown_blocks_repeated_game(tmp_path: Path) -> None:

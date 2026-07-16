@@ -21,6 +21,7 @@ def test_settings_from_env_uses_required_and_default_values() -> None:
     assert settings.POSTGRES_SCHEMA == "copenhague"
     assert settings.POSTGRES_POOL_MIN_SIZE == 2
     assert settings.POSTGRES_POOL_MAX_SIZE == 10
+    assert settings.ECONOMIC_DIFFICULTY_THRESHOLD_BPS == 7_000
     assert settings.ENABLE_MEMBERS_INTENT is False
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is False
 
@@ -42,6 +43,7 @@ def test_settings_from_env_parses_optional_values() -> None:
             "POSTGRES_SCHEMA": "custom_schema",
             "POSTGRES_POOL_MIN_SIZE": "3",
             "POSTGRES_POOL_MAX_SIZE": "12",
+            "ECONOMIC_DIFFICULTY_THRESHOLD_BPS": "6500",
             "ENABLE_MEMBERS_INTENT": "true",
             "ENABLE_MESSAGE_CONTENT_INTENT": "1",
         }
@@ -60,6 +62,7 @@ def test_settings_from_env_parses_optional_values() -> None:
     assert settings.POSTGRES_SCHEMA == "custom_schema"
     assert settings.POSTGRES_POOL_MIN_SIZE == 3
     assert settings.POSTGRES_POOL_MAX_SIZE == 12
+    assert settings.ECONOMIC_DIFFICULTY_THRESHOLD_BPS == 6_500
     assert settings.ENABLE_MEMBERS_INTENT is True
     assert settings.ENABLE_MESSAGE_CONTENT_INTENT is True
 
@@ -73,3 +76,14 @@ def test_settings_from_env_accepts_legacy_guild_id() -> None:
     settings = Settings.from_env({"DISCORD_TOKEN": "token", "GUILD_ID": "123"})
 
     assert settings.GUILD_IDS == (123,)
+
+
+@pytest.mark.parametrize("value", ["0", "9000"])
+def test_settings_rejects_invalid_economic_threshold(value: str) -> None:
+    with pytest.raises(ValueError, match="ECONOMIC_DIFFICULTY_THRESHOLD_BPS"):
+        Settings.from_env(
+            {
+                "DISCORD_TOKEN": "token",
+                "ECONOMIC_DIFFICULTY_THRESHOLD_BPS": value,
+            }
+        )
