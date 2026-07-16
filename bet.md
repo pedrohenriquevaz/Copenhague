@@ -178,7 +178,7 @@ Esses três jogos são simples, rápidos e validam a estrutura base de apostas.
 
 ### 4.1. Estado atual do projeto
 
-No projeto atual, a estrutura base de economia já existe em `app/repositories/economy_repository.py` e usa SQLite, não PostgreSQL.
+No projeto atual, a estrutura base de economia existe em `app/repositories/economy_repository.py` e usa exclusivamente PostgreSQL.
 
 Também já existe uma primeira implementação de cassino:
 
@@ -1228,18 +1228,18 @@ canal permitido
 
 ## 18.1. Realidade atual
 
-O projeto atual usa SQLite e repositórios explícitos, sem ORM.
+O projeto atual usa PostgreSQL e repositórios explícitos, sem ORM.
 
-As tabelas de economia, atividade e loja ficam em `SQLiteEconomyRepository`, usando:
+As tabelas de economia, atividade e loja são acessadas por `PostgresEconomyRepository`, usando:
 
 ```text
-INTEGER para IDs, quantidades e flags booleanas
-TEXT para datas serializadas
-TEXT com JSON serializado para metadados
-AUTOINCREMENT para IDs internos
+BIGINT para IDs e quantidades
+BOOLEAN ou BIGINT para flags, conforme o schema existente
+TEXT para datas e metadados serializados mantidos pelo modelo atual
+BIGSERIAL para IDs internos
 ```
 
-Portanto, as especificações abaixo devem seguir SQLite. Não usar `BIGSERIAL`, `JSONB`, `TIMESTAMPTZ`, `BOOLEAN` nativo ou `DEFAULT now()` como se fosse PostgreSQL.
+As especificações e migrations devem seguir exclusivamente a sintaxe PostgreSQL.
 
 O BlackJack atual ainda mantém a sessão interativa em memória no `BlackjackService`. As transações financeiras já são persistidas em `economy_transactions` com `CASINO_BET` e `CASINO_PAYOUT`. As tabelas abaixo são a evolução recomendada para auditoria completa, estatísticas, cooldowns e configurações de todos os jogos.
 
@@ -1269,7 +1269,7 @@ Metadados mínimos recomendados para jogos:
 
 ## 18.3. Nova tabela: game_settings
 
-Configuração por servidor e por jogo. Deve ser criada futuramente no repositório SQLite do cassino ou no `SQLiteEconomyRepository`, se a opção for manter toda a economia no mesmo banco.
+Configuração por servidor e por jogo, persistida no schema PostgreSQL compartilhado.
 
 ```sql
 CREATE TABLE IF NOT EXISTS game_settings (
@@ -1551,7 +1551,7 @@ Empate e devolução podem ser registrados como `CASINO_PAYOUT` com `amount = ap
 
 ## 20.3. Atomicidade
 
-O repositório atual já usa lock e transações SQLite para mutações de saldo.
+O repositório atual usa locks de linha e transações PostgreSQL para mutações de saldo.
 
 Regras para novos jogos:
 
