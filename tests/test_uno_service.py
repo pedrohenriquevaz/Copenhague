@@ -68,6 +68,10 @@ async def test_uno_lobby_join_and_start_deals_private_hands(tmp_path) -> None:
     session = await service.start_game(session.id or 0, 100)
 
     assert session.status is UnoGameStatus.PLAYING
+    assert set(session.economic_policy_snapshots) == {100, 200}
+    persisted_session = await repository.get_game(session.id or 0)
+    assert persisted_session is not None
+    assert set(persisted_session.economic_policy_snapshots) == {100, 200}
     assert [len(player.hand) for player in session.players] == [7, 7]
     assert len(session.draw_pile) == 93
     assert len(session.discard_pile) == 1
@@ -75,6 +79,69 @@ async def test_uno_lobby_join_and_start_deals_private_hands(tmp_path) -> None:
     assert session.top_card.color is not None
     assert session.current_player is not None
     assert session.current_player.user_id == 100
+
+
+async def test_uno_partial_start_failure_retry_and_cancel_use_distinct_refunds(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = PostgresUnoRepository(tmp_path / "uno.pg")
+    economy_repository = PostgresEconomyRepository(tmp_path / "uno.pg")
+    economy = EconomyService(economy_repository)
+    for user_id in (100, 200):
+        await economy.give_points(
+            guild_id=1,
+            user_id=user_id,
+            actor_id=999,
+            amount=1000,
+            reason="seed",
+        )
+    service = UnoService(repository, economy_repository, rng=random.Random(2))
+    session = await service.create_lobby(
+        guild_id=1,
+        channel_id=10,
+        created_by=100,
+        title="Mesa com retry",
+        stake=100,
+    )
+    session = await service.join_game(session.id or 0, 200)
+
+    original_mutate_balance = economy_repository.mutate_balance
+    stake_attempts = 0
+
+    async def flaky_mutate_balance(**kwargs):
+        nonlocal stake_attempts
+        if kwargs.get("reason") == "uno_stake":
+            stake_attempts += 1
+            if stake_attempts == 2:
+                raise RuntimeError("falha inesperada simulada")
+        return await original_mutate_balance(**kwargs)
+
+    monkeypatch.setattr(economy_repository, "mutate_balance", flaky_mutate_balance)
+
+    with pytest.raises(RuntimeError, match="inesperada simulada"):
+        await service.start_game(session.id or 0, 100)
+
+    assert (await economy.get_wallet(1, 100)).balance == 1000
+    assert (await economy.get_wallet(1, 200)).balance == 1000
+
+    session = await service.start_game(session.id or 0, 100)
+    assert session.status is UnoGameStatus.PLAYING
+    session = await service.cancel_game(session.id or 0, 100)
+    assert session.status is UnoGameStatus.CANCELLED
+    assert (await economy.get_wallet(1, 100)).balance == 1000
+    assert (await economy.get_wallet(1, 200)).balance == 1000
+
+    refunds = [
+        transaction
+        for transaction in await economy_repository.list_transactions(1, 100, limit=20)
+        if transaction.reason in {"uno_failed_start", "uno_cancel_refund"}
+    ]
+    assert {transaction.reason for transaction in refunds} == {
+        "uno_failed_start",
+        "uno_cancel_refund",
+    }
+    assert len({transaction.idempotency_key for transaction in refunds}) == 2
 
 
 async def test_uno_rejects_player_outside_turn(tmp_path) -> None:

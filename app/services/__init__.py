@@ -9,6 +9,11 @@ from .collective_race_service import (
     CollectiveRaceServiceError,
     CollectiveRaceValidationError,
 )
+from .economic_tier_service import (
+    EconomicTierConfigurationError,
+    EconomicTierService,
+)
+from .economy_limits import EconomicDifficultyPolicyService
 from .economy_service import EconomyService, EconomyValidationError
 from .game_progress_service import (
     GameProgressService,
@@ -50,6 +55,9 @@ __all__ = [
     "CollectiveRaceValidationError",
     "EconomyService",
     "EconomyValidationError",
+    "EconomicDifficultyPolicyService",
+    "EconomicTierConfigurationError",
+    "EconomicTierService",
     "GameProgressService",
     "GameProgressServiceError",
     "GameProgressValidationError",

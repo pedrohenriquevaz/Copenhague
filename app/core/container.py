@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from app.core.config import Settings
 from app.integrations import AsyncHttpClient, DiscordOrchestratedTimeoutPolicy
 from app.repositories.postgres_database import PostgresDatabase
+from app.repositories.postgres_moderation_repository import PostgresModerationRepository
 from app.repositories.postgres_repositories import (
     PostgresBolaoRepository,
     PostgresEconomyRepository,
@@ -20,11 +21,14 @@ from app.services.blackjack_service import BlackjackService
 from app.services.bolao_service import BolaoService
 from app.services.casino_service import CasinoService
 from app.services.collective_race_service import CollectiveRaceService
+from app.services.economic_tier_service import EconomicTierService
+from app.services.economy_limits import EconomicDifficultyPolicyService
 from app.services.economy_service import EconomyService
 from app.services.form_service import FormService
 from app.services.game_progress_service import GameProgressService
 from app.services.giveaway_service import GiveawayService
 from app.services.match_bet_service import MatchBetService
+from app.services.moderation_service import ModerationService
 from app.services.scratch_card_service import ScratchCardService
 from app.services.shop_service import ShopService
 from app.services.truco_service import TrucoService
@@ -45,10 +49,14 @@ class AppContainer:
     game_progress_repository: PostgresGameProgressRepository
     form_repository: PostgresFormRepository
     economy_repository: PostgresEconomyRepository
+    moderation_repository: PostgresModerationRepository
     giveaway_service: GiveawayService
     bolao_service: BolaoService
     form_service: FormService
     economy_service: EconomyService
+    moderation_service: ModerationService
+    economic_tier_service: EconomicTierService
+    economic_difficulty_policy_service: EconomicDifficultyPolicyService
     game_progress_service: GameProgressService
     match_bet_service: MatchBetService
     truco_service: TrucoService
@@ -69,6 +77,7 @@ class AppContainer:
             max_size=settings.POSTGRES_POOL_MAX_SIZE,
         )
         economy_repository = PostgresEconomyRepository(database)
+        moderation_repository = PostgresModerationRepository(database)
         game_progress_repository = PostgresGameProgressRepository(database)
         match_bet_repository = PostgresMatchBetRepository(database)
         truco_repository = PostgresTrucoRepository(database)
@@ -78,6 +87,12 @@ class AppContainer:
         form_repository = PostgresFormRepository(database)
 
         economy_service = EconomyService(economy_repository)
+        economic_tier_service = EconomicTierService()
+        economic_policy_service = EconomicDifficultyPolicyService(
+            economy_repository,
+            economic_tier_service,
+            increased_threshold_bps=settings.ECONOMIC_DIFFICULTY_THRESHOLD_BPS,
+        )
         game_progress_service = GameProgressService(
             game_progress_repository,
             economy_repository,
@@ -85,13 +100,19 @@ class AppContainer:
         match_bet_service = MatchBetService(
             match_bet_repository,
             economy_repository,
+            economic_policy=economic_policy_service,
         )
         truco_service = TrucoService(
             truco_repository,
             economy_repository,
             progress_service=game_progress_service,
+            economic_policy=economic_policy_service,
         )
-        uno_service = UnoService(uno_repository, economy_repository)
+        uno_service = UnoService(
+            uno_repository,
+            economy_repository,
+            economic_policy=economic_policy_service,
+        )
         policy = DiscordOrchestratedTimeoutPolicy(
             interaction_ack_seconds=settings.DISCORD_INTERACTION_ACK_SECONDS,
             connect_seconds=settings.HTTP_CONNECT_TIMEOUT_SECONDS,
@@ -112,10 +133,14 @@ class AppContainer:
             game_progress_repository=game_progress_repository,
             form_repository=form_repository,
             economy_repository=economy_repository,
+            moderation_repository=moderation_repository,
             giveaway_service=GiveawayService(giveaway_repository),
             bolao_service=BolaoService(bolao_repository),
             form_service=FormService(form_repository),
             economy_service=economy_service,
+            moderation_service=ModerationService(moderation_repository),
+            economic_tier_service=economic_tier_service,
+            economic_difficulty_policy_service=economic_policy_service,
             game_progress_service=game_progress_service,
             match_bet_service=match_bet_service,
             truco_service=truco_service,
@@ -125,19 +150,23 @@ class AppContainer:
             casino_service=CasinoService(
                 economy_repository,
                 progress_service=game_progress_service,
+                economic_policy=economic_policy_service,
             ),
             blackjack_service=BlackjackService(
                 economy_repository,
                 progress_service=game_progress_service,
+                economic_policy=economic_policy_service,
             ),
             scratch_card_service=ScratchCardService(
                 economy_repository,
                 game_progress_service,
+                economic_policy=economic_policy_service,
             ),
             collective_race_service=CollectiveRaceService(
                 game_progress_repository,
                 economy_repository,
                 game_progress_service,
+                economic_policy=economic_policy_service,
             ),
         )
 

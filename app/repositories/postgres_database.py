@@ -40,6 +40,7 @@ _SERIAL_ID_TABLES = {
     "giveaway_events",
     "match_bet_matches",
     "match_bet_tickets",
+    "moderation_cases",
     "native_voice_sessions",
     "reward_items",
     "reward_purchases",

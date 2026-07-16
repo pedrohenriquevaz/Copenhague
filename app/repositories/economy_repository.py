@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Any
 
 from app.models.activity import ActivityStats, NativeVoiceSession
@@ -11,6 +11,7 @@ from app.models.economy import (
     ActivityClaimCursor,
     ActivityConversionResult,
     BalanceMutationResult,
+    CasinoPayoutSettlementResult,
     CreditProtectionAdjustmentResult,
     CreditProtectionResult,
     CreditProtectionState,
@@ -113,6 +114,7 @@ class _EconomyRepositoryImplementation:
         stake: int,
         is_loss: bool,
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> CreditProtectionResult:
         return await asyncio.to_thread(
             self._apply_credit_protection_sync,
@@ -122,6 +124,7 @@ class _EconomyRepositoryImplementation:
             stake,
             is_loss,
             metadata or {},
+            idempotency_key,
         )
 
     async def get_savings_overview(
@@ -191,6 +194,7 @@ class _EconomyRepositoryImplementation:
         actor_id: int | None,
         reason: str | None,
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> BalanceMutationResult:
         return await asyncio.to_thread(
             self._mutate_balance_sync,
@@ -201,6 +205,33 @@ class _EconomyRepositoryImplementation:
             actor_id,
             reason,
             metadata or {},
+            idempotency_key,
+        )
+
+    async def settle_casino_payout(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        requested_payout: int,
+        transaction_type: EconomyTransactionType,
+        reason: str,
+        metadata: dict[str, Any],
+        daily_profit_limit: int | None,
+        profit_timezone_offset_minutes: int,
+        idempotency_key: str | None = None,
+    ) -> CasinoPayoutSettlementResult:
+        return await asyncio.to_thread(
+            self._settle_casino_payout_sync,
+            guild_id,
+            user_id,
+            requested_payout,
+            transaction_type,
+            reason,
+            metadata,
+            daily_profit_limit,
+            profit_timezone_offset_minutes,
+            idempotency_key,
         )
 
     async def grant_achievement_reward_once(
@@ -706,9 +737,25 @@ class _EconomyRepositoryImplementation:
                         balance_after INTEGER NOT NULL,
                         reason TEXT,
                         metadata_json TEXT NOT NULL DEFAULT '{}',
+                        idempotency_key TEXT,
                         created_at TEXT NOT NULL
                     )
                     """)
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS economy_effect_claims (
+                        guild_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        effect_key TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (guild_id, effect_key)
+                    )
+                    """)
+                self._ensure_column(
+                    connection,
+                    "economy_transactions",
+                    "idempotency_key",
+                    "TEXT",
+                )
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS native_message_stats (
                         guild_id INTEGER NOT NULL,
@@ -845,6 +892,12 @@ class _EconomyRepositoryImplementation:
                     CREATE INDEX IF NOT EXISTS
                         idx_economy_transactions_guild_user_created
                     ON economy_transactions(guild_id, user_id, created_at DESC)
+                    """)
+                connection.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS
+                        idx_economy_transactions_idempotency
+                    ON economy_transactions(guild_id, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL
                     """)
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_economy_reward_claims_user
@@ -1157,6 +1210,13 @@ class _EconomyRepositoryImplementation:
                     """,
                     (guild_id, user_id),
                 ).rowcount
+                connection.execute(
+                    """
+                    DELETE FROM economy_effect_claims
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (guild_id, user_id),
+                )
                 deleted_savings_accounts = connection.execute(
                     """
                     DELETE FROM user_savings_accounts
@@ -1298,7 +1358,12 @@ class _EconomyRepositoryImplementation:
         stake: int,
         is_loss: bool,
         metadata: dict[str, Any],
+        idempotency_key: str | None,
     ) -> CreditProtectionResult:
+        if idempotency_key is not None and (
+            not idempotency_key.strip() or len(idempotency_key) > 200
+        ):
+            raise ValueError("A chave de idempotencia do efeito e invalida.")
         if stake <= 0:
             return CreditProtectionResult(
                 state=self._get_or_create_credit_protection_state_sync(
@@ -1316,6 +1381,26 @@ class _EconomyRepositoryImplementation:
                     guild_id,
                     user_id,
                 )
+                if idempotency_key is not None:
+                    claim_row = connection.execute(
+                        """
+                        SELECT user_id
+                        FROM economy_effect_claims
+                        WHERE guild_id = ? AND effect_key = ?
+                        """,
+                        (guild_id, idempotency_key),
+                    ).fetchone()
+                    if claim_row is not None:
+                        if int(claim_row["user_id"]) != user_id:
+                            raise RuntimeError(
+                                "Chave de efeito vinculada a outro usuario."
+                            )
+                        connection.commit()
+                        return CreditProtectionResult(
+                            state=self._row_to_credit_protection_state(state_row),
+                            triggered_streak=int(state_row["lose_streak"]),
+                            idempotent_replay=True,
+                        )
                 saves = int(state_row["saves"])
                 lose_streak_before = int(state_row["lose_streak"])
                 now = serialize_datetime(utc_now())
@@ -1412,6 +1497,15 @@ class _EconomyRepositoryImplementation:
                 if cashback_amount > 0:
                     wallet_row = self._get_wallet_row(connection, guild_id, user_id)
                     wallet = self._row_to_wallet(wallet_row)
+                if idempotency_key is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO economy_effect_claims (
+                            guild_id, user_id, effect_key, created_at
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (guild_id, user_id, idempotency_key, now),
+                    )
                 connection.commit()
 
         if final_row is None:
@@ -1712,15 +1806,46 @@ class _EconomyRepositoryImplementation:
         actor_id: int | None,
         reason: str | None,
         metadata: dict[str, Any],
+        idempotency_key: str | None,
     ) -> BalanceMutationResult:
         if amount == 0:
             raise ValueError("A quantidade de pontos nao pode ser zero.")
+        if idempotency_key is not None and (
+            not idempotency_key.strip() or len(idempotency_key) > 200
+        ):
+            raise ValueError("A chave de idempotencia da movimentacao e invalida.")
 
         with self._lock:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 wallet_row = self._ensure_wallet(connection, guild_id, user_id)
                 balance_before = int(wallet_row["balance"])
+                if idempotency_key is not None:
+                    existing_row = connection.execute(
+                        """
+                        SELECT *
+                        FROM economy_transactions
+                        WHERE guild_id = ? AND idempotency_key = ?
+                        """,
+                        (guild_id, idempotency_key),
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing = self._row_to_transaction(existing_row)
+                        if (
+                            existing.user_id != user_id
+                            or existing.type is not transaction_type
+                            or existing.amount != amount
+                            or existing.reason != reason
+                        ):
+                            raise RuntimeError(
+                                "Chave de idempotencia reutilizada em outra "
+                                "movimentacao."
+                            )
+                        connection.commit()
+                        return BalanceMutationResult(
+                            wallet=self._row_to_wallet(wallet_row),
+                            transaction=existing,
+                        )
                 balance_after = balance_before + amount
                 if balance_after < 0:
                     connection.rollback()
@@ -1759,11 +1884,162 @@ class _EconomyRepositoryImplementation:
                     reason=reason,
                     metadata=metadata,
                     created_at=now,
+                    idempotency_key=idempotency_key,
                 )
                 connection.commit()
 
         wallet = self._get_or_create_wallet_sync(guild_id, user_id)
         return BalanceMutationResult(wallet=wallet, transaction=transaction)
+
+    def _settle_casino_payout_sync(
+        self,
+        guild_id: int,
+        user_id: int,
+        requested_payout: int,
+        transaction_type: EconomyTransactionType,
+        reason: str,
+        metadata: dict[str, Any],
+        daily_profit_limit: int | None,
+        profit_timezone_offset_minutes: int,
+        idempotency_key: str | None,
+    ) -> CasinoPayoutSettlementResult:
+        if requested_payout <= 0:
+            raise ValueError("O pagamento solicitado precisa ser positivo.")
+        if idempotency_key is not None and (
+            not idempotency_key.strip() or len(idempotency_key) > 200
+        ):
+            raise ValueError("A chave de idempotencia do pagamento e invalida.")
+        if not -840 <= profit_timezone_offset_minutes <= 840:
+            raise ValueError("O offset do timezone economico e invalido.")
+
+        transaction: EconomyTransaction | None = None
+        replayed_transaction: EconomyTransaction | None = None
+        daily_profit_before = 0
+        paid_payout = requested_payout
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                wallet_row = self._ensure_wallet(connection, guild_id, user_id)
+                balance_before = int(wallet_row["balance"])
+                now_value = utc_now()
+                economic_timezone = timezone(
+                    timedelta(minutes=profit_timezone_offset_minutes)
+                )
+                profit_window_value = now_value.astimezone(
+                    economic_timezone
+                ).replace(hour=0, minute=0, second=0, microsecond=0)
+                profit_window_start = serialize_datetime(profit_window_value)
+                now = serialize_datetime(now_value)
+                if idempotency_key is not None:
+                    existing_row = connection.execute(
+                        """
+                        SELECT *
+                        FROM economy_transactions
+                        WHERE guild_id = ? AND idempotency_key = ?
+                        """,
+                        (guild_id, idempotency_key),
+                    ).fetchone()
+                    if existing_row is not None:
+                        replayed_transaction = self._row_to_transaction(existing_row)
+                        if replayed_transaction.user_id != user_id:
+                            raise RuntimeError(
+                                "Chave de idempotencia vinculada a outro usuario."
+                            )
+                        if (
+                            replayed_transaction.type is not transaction_type
+                            or replayed_transaction.reason != reason
+                            or replayed_transaction.metadata.get("requested_payout")
+                            != requested_payout
+                        ):
+                            raise RuntimeError(
+                                "Chave de idempotencia reutilizada com outro pagamento."
+                            )
+                        connection.commit()
+                if replayed_transaction is not None:
+                    paid_payout = replayed_transaction.amount
+                elif daily_profit_limit is not None:
+                    profit_row = connection.execute(
+                        """
+                        SELECT COALESCE(SUM(amount), 0) AS net_profit
+                        FROM economy_transactions
+                        WHERE guild_id = ?
+                          AND user_id = ?
+                          AND created_at >= ?
+                          AND type IN (
+                              'CASINO_BET',
+                              'CASINO_PAYOUT',
+                              'MATCH_BET',
+                              'MATCH_BET_PAYOUT',
+                              'REFUND',
+                              'CREDIT_CASHBACK'
+                          )
+                        """,
+                        (guild_id, user_id, profit_window_start),
+                    ).fetchone()
+                    daily_profit_before = int(profit_row["net_profit"] or 0)
+                    remaining = daily_profit_limit - daily_profit_before
+                    paid_payout = max(0, min(requested_payout, remaining))
+
+                balance_after = balance_before + paid_payout
+                if replayed_transaction is None and paid_payout > 0:
+                    connection.execute(
+                        """
+                        UPDATE user_wallets
+                        SET balance = ?,
+                            total_earned = total_earned + ?,
+                            updated_at = ?
+                        WHERE guild_id = ? AND user_id = ?
+                        """,
+                        (
+                            balance_after,
+                            paid_payout,
+                            now,
+                            guild_id,
+                            user_id,
+                        ),
+                    )
+                if replayed_transaction is None:
+                    settlement_metadata = {
+                        **metadata,
+                        "payout": paid_payout,
+                        "paid_payout": paid_payout,
+                        "requested_payout": requested_payout,
+                        "economic_settlement_window_start": profit_window_start,
+                    }
+                    settlement_metadata.setdefault(
+                        "uncapped_payout", requested_payout
+                    )
+                    transaction = self._insert_transaction(
+                        connection,
+                        guild_id=guild_id,
+                        user_id=user_id,
+                        actor_id=None,
+                        transaction_type=transaction_type,
+                        amount=paid_payout,
+                        balance_before=balance_before,
+                        balance_after=balance_after,
+                        reason=reason,
+                        metadata=settlement_metadata,
+                        created_at=now,
+                        idempotency_key=idempotency_key,
+                    )
+                    connection.commit()
+
+        if replayed_transaction is not None:
+            transaction = replayed_transaction
+
+        if transaction is None:  # pragma: no cover - protegido pelo fluxo acima.
+            raise RuntimeError("Nao foi possivel registrar o pagamento do jogo.")
+        wallet = self._get_or_create_wallet_sync(guild_id, user_id)
+        return CasinoPayoutSettlementResult(
+            wallet=wallet,
+            transaction=transaction,
+            requested_payout=requested_payout,
+            paid_payout=paid_payout,
+            daily_profit_before=daily_profit_before,
+            profit_window_start=parse_datetime(profit_window_start),
+            idempotent_replay=replayed_transaction is not None,
+        )
 
     def _grant_achievement_reward_once_sync(
         self,
@@ -3296,6 +3572,7 @@ class _EconomyRepositoryImplementation:
                 created_at,
                 updated_at
             ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(guild_id, user_id) DO NOTHING
             """,
             (guild_id, user_id, now, now),
         )
@@ -3655,6 +3932,7 @@ class _EconomyRepositoryImplementation:
         reason: str | None,
         metadata: dict[str, Any],
         created_at: str,
+        idempotency_key: str | None = None,
     ) -> EconomyTransaction:
         cursor = connection.execute(
             """
@@ -3668,8 +3946,9 @@ class _EconomyRepositoryImplementation:
                 balance_after,
                 reason,
                 metadata_json,
+                idempotency_key,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 guild_id,
@@ -3681,6 +3960,7 @@ class _EconomyRepositoryImplementation:
                 balance_after,
                 reason,
                 json.dumps(metadata, ensure_ascii=True),
+                idempotency_key,
                 created_at,
             ),
         )
@@ -3696,6 +3976,7 @@ class _EconomyRepositoryImplementation:
             reason=reason,
             metadata=metadata,
             created_at=parse_datetime(created_at),
+            idempotency_key=idempotency_key,
         )
 
     @staticmethod
@@ -3803,6 +4084,11 @@ class _EconomyRepositoryImplementation:
             reason=str(row["reason"]) if row["reason"] is not None else None,
             metadata=json.loads(str(row["metadata_json"] or "{}")),
             created_at=parse_datetime(str(row["created_at"])),
+            idempotency_key=(
+                str(row["idempotency_key"])
+                if row.get("idempotency_key") is not None
+                else None
+            ),
         )
 
     @staticmethod

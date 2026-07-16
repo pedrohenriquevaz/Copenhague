@@ -17,7 +17,8 @@ from app.models.uno import (
 )
 from app.repositories.economy_protocol import EconomyRepositoryProtocol
 from app.repositories.uno_repository import UnoRepositoryProtocol
-from app.services.economy_limits import apply_daily_casino_profit_cap
+from app.services.economic_tier_service import EconomicTierService
+from app.services.economy_limits import EconomicDifficultyPolicyService
 
 
 class UnoServiceError(Exception):
@@ -40,10 +41,14 @@ class UnoService:
         economy_repository: EconomyRepositoryProtocol,
         *,
         rng: random.Random | random.SystemRandom | None = None,
+        economic_policy: EconomicDifficultyPolicyService | None = None,
     ) -> None:
         self._repository = repository
         self._economy_repository = economy_repository
         self._rng = rng or random.SystemRandom()
+        self._economic_policy = economic_policy or EconomicDifficultyPolicyService(
+            economy_repository, EconomicTierService()
+        )
         self._lock = asyncio.Lock()
 
     async def create_lobby(
@@ -535,10 +540,21 @@ class UnoService:
             raise UnoValidationError("Você não possui saldo suficiente para a aposta.")
 
     async def _debit_stakes(self, session: UnoSession) -> None:
-        debited: list[int] = []
+        settings = await self._economy_repository.get_guild_settings(session.guild_id)
+        snapshots: dict[int, dict[str, object]] = {}
+        for player in session.human_players:
+            decision = await self._economic_policy.select(
+                settings,
+                guild_id=session.guild_id,
+                user_id=player.user_id,
+                game="uno",
+            )
+            snapshots[player.user_id] = self._economic_policy.snapshot(decision)
+        session.economic_policy_snapshots = snapshots
+        debited: list[tuple[int, int]] = []
         try:
             for player in session.human_players:
-                await self._economy_repository.mutate_balance(
+                debit = await self._economy_repository.mutate_balance(
                     guild_id=session.guild_id,
                     user_id=player.user_id,
                     amount=-session.stake,
@@ -547,13 +563,21 @@ class UnoService:
                     reason="uno_stake",
                     metadata={"game": "uno", "game_id": session.id},
                 )
-                debited.append(player.user_id)
-        except ValueError as exc:
-            for user_id in debited:
-                await self._refund_player(session, user_id, "uno_failed_start")
-            raise UnoValidationError(
-                "Um participante não possui saldo suficiente."
-            ) from exc
+                debited.append((player.user_id, debit.transaction.id))
+        except Exception as exc:
+            for user_id, transaction_id in debited:
+                await self._refund_player(
+                    session,
+                    user_id,
+                    "uno_failed_start",
+                    idempotency_key=f"uno:debit:{transaction_id}:refund",
+                )
+            session.economic_policy_snapshots = {}
+            if isinstance(exc, ValueError):
+                raise UnoValidationError(
+                    "Um participante não possui saldo suficiente."
+                ) from exc
+            raise
         session.stakes_debited = True
 
     async def _settle_game(self, session: UnoSession, winner: UnoPlayer) -> None:
@@ -566,28 +590,29 @@ class UnoService:
                 settings = await self._economy_repository.get_guild_settings(
                     session.guild_id
                 )
-                payout = await apply_daily_casino_profit_cap(
-                    self._economy_repository,
+                decision = await self._economic_policy.decision_for_settlement(
+                    session.economic_policy_snapshots.get(player.user_id),
                     settings,
+                    guild_id=session.guild_id,
+                    user_id=player.user_id,
+                    game="uno",
+                    stake=session.stake,
+                )
+                await self._economic_policy.settle_payout(
+                    decision,
                     guild_id=session.guild_id,
                     user_id=player.user_id,
                     stake=session.stake,
                     payout=payout,
+                    transaction_type=EconomyTransactionType.CASINO_PAYOUT,
+                    reason="uno_payout",
+                    metadata={
+                        "game": "uno",
+                        "game_id": session.id,
+                        "mode": session.game_mode.value,
+                    },
+                    idempotency_key=f"uno:{session.id}:{player.user_id}",
                 )
-                if payout > 0:
-                    await self._economy_repository.mutate_balance(
-                        guild_id=session.guild_id,
-                        user_id=player.user_id,
-                        amount=payout,
-                        transaction_type=EconomyTransactionType.CASINO_PAYOUT,
-                        actor_id=None,
-                        reason="uno_payout",
-                        metadata={
-                            "game": "uno",
-                            "game_id": session.id,
-                            "mode": session.game_mode.value,
-                        },
-                    )
             await self._economy_repository.apply_credit_protection(
                 guild_id=session.guild_id,
                 user_id=player.user_id,
@@ -595,6 +620,7 @@ class UnoService:
                 stake=session.stake,
                 is_loss=not won,
                 metadata={"source": "uno", "game_id": session.id},
+                idempotency_key=f"uno:{session.id}:{player.user_id}:credit",
             )
         session.stakes_debited = False
 
@@ -606,7 +632,12 @@ class UnoService:
         session.stakes_debited = False
 
     async def _refund_player(
-        self, session: UnoSession, user_id: int, reason: str
+        self,
+        session: UnoSession,
+        user_id: int,
+        reason: str,
+        *,
+        idempotency_key: str | None = None,
     ) -> None:
         await self._economy_repository.mutate_balance(
             guild_id=session.guild_id,
@@ -616,6 +647,9 @@ class UnoService:
             actor_id=None,
             reason=reason,
             metadata={"game": "uno", "game_id": session.id},
+            idempotency_key=(
+                idempotency_key or f"uno:{session.id}:{user_id}:refund"
+            ),
         )
 
     @staticmethod

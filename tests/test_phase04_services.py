@@ -163,7 +163,7 @@ async def test_scratch_card_profit_pressure_reduces_win_gate(
             numbers=[9_000],
         ),
     )
-    await _seed_wallet(economy, balance=1000)
+    await _seed_wallet(economy, balance=30000)
     await economy.mutate_balance(
         guild_id=1,
         user_id=10,
@@ -176,7 +176,7 @@ async def test_scratch_card_profit_pressure_reduces_win_gate(
     await economy.mutate_balance(
         guild_id=1,
         user_id=10,
-        amount=2600,
+        amount=3600,
         transaction_type=EconomyTransactionType.CASINO_PAYOUT,
         actor_id=None,
         reason="previous_payout",
@@ -187,7 +187,7 @@ async def test_scratch_card_profit_pressure_reduces_win_gate(
 
     assert result.winning_lines == []
     assert result.payout == 0
-    assert result.wallet.balance == 3450
+    assert result.wallet.balance == 33450
 
 
 async def test_scratch_card_limits_daily_purchases_per_user(
@@ -201,7 +201,7 @@ async def test_scratch_card_limits_daily_purchases_per_user(
         progress,
         rng=FixedRng(),
     )
-    await _seed_wallet(economy, balance=1000)
+    await _seed_wallet(economy, balance=30000)
 
     for _ in range(SCRATCH_DAILY_PURCHASE_LIMIT):
         await service.play(guild_id=1, user_id=10, tier="bronze")
@@ -232,7 +232,7 @@ async def test_scratch_card_daily_purchase_limit_can_be_disabled(
         progress,
         rng=FixedRng(),
     )
-    await _seed_wallet(economy, balance=1000)
+    await _seed_wallet(economy, balance=30000)
 
     for _ in range(SCRATCH_DAILY_PURCHASE_LIMIT + 1):
         await service.play(guild_id=1, user_id=10, tier="bronze")
@@ -292,6 +292,63 @@ async def test_collective_race_pays_winners_and_marks_losers(tmp_path: Path) -> 
     assert loser_wallet.balance == 950
 
 
+async def test_collective_race_persists_pre_debit_policy_snapshot(
+    tmp_path: Path,
+) -> None:
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    await economy.update_guild_settings(1, {"casino_daily_profit_limit": 30})
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
+    progress = GameProgressService(progress_repository, economy)
+    service = CollectiveRaceService(progress_repository, economy, progress)
+    await _seed_wallet(economy, balance=25_001)
+    race = await service.create_race(
+        guild_id=1,
+        opened_by=99,
+        stake=100,
+        duration_seconds=60,
+    )
+
+    placement = await service.place_bet(
+        guild_id=1,
+        user_id=10,
+        race_id=race.id,
+        mascot="dragao",
+    )
+    reloaded_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
+    reloaded_progress = GameProgressService(reloaded_repository, economy)
+    reloaded_service = CollectiveRaceService(
+        reloaded_repository,
+        economy,
+        reloaded_progress,
+    )
+    result = await reloaded_service.finish_race(
+        guild_id=1,
+        race_id=race.id,
+        winner="dragao",
+    )
+    balance_after_first_finish = (await economy.get_wallet(1, 10)).balance
+    payout_transactions = [
+        transaction
+        for transaction in await economy.list_transactions(1, 10, limit=20)
+        if transaction.reason == "collective_race_payout"
+    ]
+    await reloaded_service.finish_race(
+        guild_id=1,
+        race_id=race.id,
+        winner="dragao",
+    )
+
+    assert placement.bet.economic_policy_snapshot is not None
+    assert placement.bet.economic_policy_snapshot["tier"]["identifier"] == (
+        "prosperous"
+    )
+    assert result.total_paid == 130
+    assert len(payout_transactions) == 1
+    assert payout_transactions[0].amount == 130
+    assert payout_transactions[0].metadata["payout"] == 130
+    assert (await economy.get_wallet(1, 10)).balance == balance_after_first_finish
+
+
 async def test_collective_race_cancel_refunds_bets(tmp_path: Path) -> None:
     economy = PostgresEconomyRepository(tmp_path / "economy.db")
     progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
@@ -313,6 +370,60 @@ async def test_collective_race_cancel_refunds_bets(tmp_path: Path) -> None:
     assert result.bets[0].status is CollectiveRaceBetStatus.REFUNDED
     assert result.total_refunded == 100
     assert wallet.balance == 1025
+
+
+async def test_collective_race_duplicate_rollback_does_not_consume_cancel_refund_key(
+    tmp_path: Path,
+) -> None:
+    economy = PostgresEconomyRepository(tmp_path / "economy.db")
+    progress_repository = PostgresGameProgressRepository(tmp_path / "progress.db")
+    progress = GameProgressService(progress_repository, economy)
+    service = CollectiveRaceService(progress_repository, economy, progress)
+    await _seed_wallet(economy, balance=1000)
+    race = await service.create_race(
+        guild_id=1,
+        opened_by=99,
+        stake=100,
+        duration_seconds=60,
+    )
+    placement = await service.place_bet(
+        guild_id=1,
+        user_id=10,
+        race_id=race.id,
+        mascot="dragao",
+    )
+    balance_after_first_bet = (await economy.get_wallet(1, 10)).balance
+
+    with pytest.raises(CollectiveRaceValidationError, match="ja apostou"):
+        await service.place_bet(
+            guild_id=1,
+            user_id=10,
+            race_id=race.id,
+            mascot="lobo",
+        )
+
+    assert (await economy.get_wallet(1, 10)).balance == balance_after_first_bet
+    settlement = await service.finish_race(
+        guild_id=1,
+        race_id=race.id,
+        cancel=True,
+    )
+    refunds = [
+        transaction
+        for transaction in await economy.list_transactions(1, 10, limit=20)
+        if transaction.type is EconomyTransactionType.REFUND
+        and transaction.reason == "collective_race_refund"
+    ]
+    refund_keys = {transaction.idempotency_key for transaction in refunds}
+
+    assert settlement.total_refunded == 100
+    assert (await economy.get_wallet(1, 10)).balance == balance_after_first_bet + 100
+    assert len(refunds) == 2
+    assert f"collective_race:bet:{placement.bet.id}:refund" in refund_keys
+    assert any(
+        key is not None and key.startswith("collective_race:transaction:")
+        for key in refund_keys
+    )
 
 
 async def test_collective_race_uses_configured_min_bet(tmp_path: Path) -> None:

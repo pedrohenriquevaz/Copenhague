@@ -8,6 +8,7 @@ from app.models.audit import AdminAuditLog
 from app.models.economy import (
     ActivityConversionResult,
     BalanceMutationResult,
+    CasinoPayoutSettlementResult,
     CreditProtectionAdjustmentResult,
     CreditProtectionResult,
     CreditProtectionState,
@@ -62,6 +63,7 @@ class EconomyRepositoryProtocol(Protocol):
         stake: int,
         is_loss: bool,
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> CreditProtectionResult: ...
 
     async def get_savings_overview(
@@ -100,7 +102,22 @@ class EconomyRepositoryProtocol(Protocol):
         actor_id: int | None,
         reason: str | None,
         metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> BalanceMutationResult: ...
+
+    async def settle_casino_payout(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        requested_payout: int,
+        transaction_type: EconomyTransactionType,
+        reason: str,
+        metadata: dict[str, Any],
+        daily_profit_limit: int | None,
+        profit_timezone_offset_minutes: int,
+        idempotency_key: str | None = None,
+    ) -> CasinoPayoutSettlementResult: ...
 
     async def grant_achievement_reward_once(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Protocol
 
 from app.models.giveaway import parse_datetime, serialize_datetime, utc_now
@@ -183,12 +184,17 @@ class _MatchBetRepositoryImplementation:
                         status TEXT NOT NULL,
                         debit_transaction_id INTEGER,
                         payout_transaction_id INTEGER,
+                        economic_policy_json TEXT,
                         created_at TEXT NOT NULL,
                         settled_at TEXT,
                         FOREIGN KEY(match_id) REFERENCES match_bet_matches(id)
                             ON DELETE CASCADE
                     )
                     """)
+                connection.execute(
+                    "ALTER TABLE match_bet_tickets "
+                    "ADD COLUMN IF NOT EXISTS economic_policy_json TEXT"
+                )
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_match_bet_matches_active
                     ON match_bet_matches(guild_id, is_active, created_at)
@@ -436,9 +442,10 @@ class _MatchBetRepositoryImplementation:
                         status,
                         debit_transaction_id,
                         payout_transaction_id,
+                        economic_policy_json,
                         created_at,
                         settled_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
                     """,
                     (
                         data.match_id,
@@ -451,6 +458,11 @@ class _MatchBetRepositoryImplementation:
                         data.potential_payout,
                         MatchBetTicketStatus.OPEN.value,
                         data.debit_transaction_id,
+                        json.dumps(
+                            data.economic_policy_snapshot,
+                            ensure_ascii=True,
+                            allow_nan=False,
+                        ),
                         serialize_datetime(data.created_at),
                     ),
                 )
@@ -659,6 +671,11 @@ class _MatchBetRepositoryImplementation:
             payout_transaction_id=(
                 int(row["payout_transaction_id"])
                 if row["payout_transaction_id"] is not None
+                else None
+            ),
+            economic_policy_snapshot=(
+                json.loads(str(row["economic_policy_json"]))
+                if row.get("economic_policy_json") is not None
                 else None
             ),
             created_at=parse_datetime(str(row["created_at"])),
