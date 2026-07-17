@@ -206,9 +206,7 @@ def _last_followup_message(interaction: _FakeInteraction) -> str:
 
 
 def test_command_surface_exposes_kick_mute_and_warn_without_timeout() -> None:
-    commands = {
-        command.name: command for command in ModerationCog.__cog_app_commands__
-    }
+    commands = {command.name: command for command in ModerationCog.__cog_app_commands__}
 
     assert {"kick", "mute", "warn"}.issubset(commands)
     assert "timeout" not in commands

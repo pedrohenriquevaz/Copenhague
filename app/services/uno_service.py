@@ -647,9 +647,7 @@ class UnoService:
             actor_id=None,
             reason=reason,
             metadata={"game": "uno", "game_id": session.id},
-            idempotency_key=(
-                idempotency_key or f"uno:{session.id}:{user_id}:refund"
-            ),
+            idempotency_key=(idempotency_key or f"uno:{session.id}:{user_id}:refund"),
         )
 
     @staticmethod

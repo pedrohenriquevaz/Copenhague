@@ -265,6 +265,60 @@ Veja o guia completo em `docs/containerizacao.md`.
 9. Reiniciar o bot e testar botoes persistentes.
 10. Fazer backups periodicos com `backup-postgres.ps1`.
 
+## Homologacao da integracao MLBB
+
+A integracao usa uma API comunitaria e nao oficial e permanece desligada por
+padrao. Antes de habilita-la, aplique as migrations e gere uma chave Fernet fora
+do repositorio:
+
+```powershell
+python scripts/db_manage.py upgrade
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Configure a chave gerada somente no `.env` do runtime:
+
+```env
+MLBB_ENABLED=true
+MLBB_API_BASE_URL=https://mlbb.rone.dev/api
+MLBB_TOKEN_ENCRYPTION_KEYS=<chave-fernet>
+MLBB_AUTH_TTL_SECONDS=300
+MLBB_SEND_VC_COOLDOWN_SECONDS=60
+MLBB_MAX_CONFIRM_ATTEMPTS=5
+MLBB_PROFILE_CACHE_TTL_SECONDS=300
+MLBB_STATS_CACHE_TTL_SECONDS=120
+MLBB_PROFILE_REFRESH_COOLDOWN_SECONDS=30
+```
+
+Fluxo de homologacao das Fases 1 e 2:
+
+1. Reinicie o bot e confirme o carregamento de `app.cogs.mlbb.account`.
+2. Execute `/mlbb painel_publicar canal:#canal-de-teste` com `Gerenciar servidor`.
+3. Use `Vincular conta`, informe Game ID e Zone ID/Area e consulte o correio do jogo.
+4. Informe o codigo pelo botao ephemeral ou por `/mlbb confirmar` em ate 5 minutos.
+5. Confira `/mlbb conta`, reinicie o bot e valide novamente os botoes do painel.
+6. Teste `/mlbb desvincular`; a revogacao local deve funcionar mesmo com a API fora.
+7. Confira `admin_audit_logs`: apenas metadados seguros devem estar presentes.
+
+Na Fase 2, homologue tambem os comandos /mlbb perfil, /mlbb conquistas e
+/mlbb privacidade. PRIVATE deve bloquear terceiros; GUILD deve permitir apenas
+membros do mesmo servidor. O botao Atualizar respeita cooldown. Um 401/403
+claro marca REAUTH_REQUIRED; timeout, 429 e 5xx preservam ACTIVE.
+
+O cache em memoria usa TTL de 5 minutos para identidade/perfil e 2 minutos
+para estatisticas. Suas chaves usam somente guild e usuario Discord, nunca JWT.
+Reautenticacao e desvinculacao invalidam as entradas. Nao existe fallback
+stale nesta fase porque o projeto ainda nao possui um padrao seguro para dados
+externos expirados.
+
+O contrato publico nao fornece um mapa de ranks verificavel. Codigos
+desconhecidos aparecem como "Rank nao mapeado (codigo X)" e nenhum nome e
+inferido. Historico detalhado e herois frequentes ficam para as proximas fases.
+
+O bot nao persiste o codigo de verificacao, nao exibe JWT e nao altera a
+privacidade dentro do jogo. Para rotacao, coloque a chave nova primeiro em
+`MLBB_TOKEN_ENCRYPTION_KEYS` e separe chaves anteriores por virgula.
+
 ## Qualidade
 
 ```bash

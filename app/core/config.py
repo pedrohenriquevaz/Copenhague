@@ -4,6 +4,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -22,6 +23,17 @@ class Settings:
     HTTP_CONNECT_TIMEOUT_SECONDS: float
     HTTP_REQUEST_TIMEOUT_SECONDS: float
     HTTP_MAX_RETRIES: int
+    MLBB_ENABLED: bool
+    MLBB_API_BASE_URL: str
+    MLBB_HTTP_TIMEOUT_SECONDS: float
+    MLBB_MAX_CONCURRENT_REQUESTS: int
+    MLBB_TOKEN_ENCRYPTION_KEYS: tuple[str, ...]
+    MLBB_AUTH_TTL_SECONDS: int
+    MLBB_SEND_VC_COOLDOWN_SECONDS: int
+    MLBB_MAX_CONFIRM_ATTEMPTS: int
+    MLBB_PROFILE_CACHE_TTL_SECONDS: int
+    MLBB_STATS_CACHE_TTL_SECONDS: int
+    MLBB_PROFILE_REFRESH_COOLDOWN_SECONDS: int
     POSTGRES_DSN: str
     POSTGRES_SCHEMA: str
     POSTGRES_POOL_MIN_SIZE: int
@@ -57,6 +69,59 @@ class Settings:
                 env, "HTTP_REQUEST_TIMEOUT_SECONDS", 15.0
             ),
             HTTP_MAX_RETRIES=max(0, int(env.get("HTTP_MAX_RETRIES", "2"))),
+            MLBB_ENABLED=_get_bool(env, "MLBB_ENABLED", False),
+            MLBB_API_BASE_URL=_get_http_base_url(
+                env,
+                "MLBB_API_BASE_URL",
+                "https://mlbb.rone.dev/api",
+            ),
+            MLBB_HTTP_TIMEOUT_SECONDS=_get_positive_float(
+                env,
+                "MLBB_HTTP_TIMEOUT_SECONDS",
+                15.0,
+            ),
+            MLBB_MAX_CONCURRENT_REQUESTS=_get_positive_int(
+                env,
+                "MLBB_MAX_CONCURRENT_REQUESTS",
+                10,
+            ),
+            MLBB_TOKEN_ENCRYPTION_KEYS=tuple(
+                key.strip()
+                for key in env.get("MLBB_TOKEN_ENCRYPTION_KEYS", "").split(",")
+                if key.strip()
+            ),
+            MLBB_AUTH_TTL_SECONDS=_get_bounded_int(
+                env,
+                "MLBB_AUTH_TTL_SECONDS",
+                300,
+                minimum=1,
+                maximum=300,
+            ),
+            MLBB_SEND_VC_COOLDOWN_SECONDS=_get_positive_int(
+                env,
+                "MLBB_SEND_VC_COOLDOWN_SECONDS",
+                60,
+            ),
+            MLBB_MAX_CONFIRM_ATTEMPTS=_get_positive_int(
+                env,
+                "MLBB_MAX_CONFIRM_ATTEMPTS",
+                5,
+            ),
+            MLBB_PROFILE_CACHE_TTL_SECONDS=_get_positive_int(
+                env,
+                "MLBB_PROFILE_CACHE_TTL_SECONDS",
+                300,
+            ),
+            MLBB_STATS_CACHE_TTL_SECONDS=_get_positive_int(
+                env,
+                "MLBB_STATS_CACHE_TTL_SECONDS",
+                120,
+            ),
+            MLBB_PROFILE_REFRESH_COOLDOWN_SECONDS=_get_positive_int(
+                env,
+                "MLBB_PROFILE_REFRESH_COOLDOWN_SECONDS",
+                30,
+            ),
             POSTGRES_DSN=env.get(
                 "POSTGRES_DSN",
                 "postgresql://copenhague:copenhague@postgres:5432/copenhague",
@@ -125,6 +190,31 @@ def _get_bounded_int(
     value = int(environ.get(key, str(default)))
     if not minimum <= value <= maximum:
         raise ValueError(f"{key} precisa ficar entre {minimum} e {maximum}.")
+    return value
+
+
+def _get_positive_int(
+    environ: Mapping[str, str],
+    key: str,
+    default: int,
+) -> int:
+    value = int(environ.get(key, str(default)))
+    if value <= 0:
+        raise ValueError(f"${key} precisa ser maior que zero.")
+    return value
+
+
+def _get_http_base_url(
+    environ: Mapping[str, str],
+    key: str,
+    default: str,
+) -> str:
+    value = environ.get(key, default).strip().rstrip("/")
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"${key} precisa ser uma URL HTTP valida.")
+    if parsed.query or parsed.fragment:
+        raise ValueError(f"${key} nao pode conter query string ou fragmento.")
     return value
 
 

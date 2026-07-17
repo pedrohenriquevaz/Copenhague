@@ -605,9 +605,7 @@ class TrucoService:
                         session,
                         user_id,
                         "truco_failed_start",
-                        idempotency_key=(
-                            f"truco:debit:{transaction_id}:refund"
-                        ),
+                        idempotency_key=(f"truco:debit:{transaction_id}:refund"),
                     )
                 session.economic_policy_snapshots = {}
                 if isinstance(exc, ValueError):
@@ -704,9 +702,7 @@ class TrucoService:
             actor_id=None,
             reason=reason,
             metadata={"game": "truco", "game_id": session.id, "stake": session.stake},
-            idempotency_key=(
-                idempotency_key or f"truco:{session.id}:{user_id}:refund"
-            ),
+            idempotency_key=(idempotency_key or f"truco:{session.id}:{user_id}:refund"),
         )
 
     async def _unlock_progress(self, guild_id: int, user_id: int, *, won: bool) -> None:

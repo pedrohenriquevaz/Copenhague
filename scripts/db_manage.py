@@ -69,6 +69,8 @@ TABLE_MANIFEST: tuple[TableSpec, ...] = (
     TableSpec("moderation_settings"),
     TableSpec("moderation_authorized_roles"),
     TableSpec("moderation_cases", True),
+    TableSpec("mlbb_auth_attempts"),
+    TableSpec("mlbb_account_links"),
 )
 
 
@@ -278,6 +280,8 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
     "match_bet_tickets": ("economic_policy_json",),
     "moderation_settings": ("log_channel_id",),
     "moderation_cases": ("duration_seconds", "metadata"),
+    "mlbb_auth_attempts": ("purpose", "code_sent_at"),
+    "mlbb_account_links": ("encrypted_jwt", "visibility"),
 }
 
 
@@ -363,6 +367,10 @@ EXPECTED_INDEXES = (
     "idx_giveaway_events_expires_at",
     "idx_giveaway_events_active_created",
     "idx_giveaway_events_active_published",
+    "uq_mlbb_open_attempt_user_guild",
+    "idx_mlbb_auth_attempts_expiry",
+    "idx_mlbb_links_game_account",
+    "idx_mlbb_links_status",
 )
 
 

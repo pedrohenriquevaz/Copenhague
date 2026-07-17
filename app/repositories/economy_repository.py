@@ -1925,9 +1925,9 @@ class _EconomyRepositoryImplementation:
                 economic_timezone = timezone(
                     timedelta(minutes=profit_timezone_offset_minutes)
                 )
-                profit_window_value = now_value.astimezone(
-                    economic_timezone
-                ).replace(hour=0, minute=0, second=0, microsecond=0)
+                profit_window_value = now_value.astimezone(economic_timezone).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
                 profit_window_start = serialize_datetime(profit_window_value)
                 now = serialize_datetime(now_value)
                 if idempotency_key is not None:
@@ -2006,9 +2006,7 @@ class _EconomyRepositoryImplementation:
                         "requested_payout": requested_payout,
                         "economic_settlement_window_start": profit_window_start,
                     }
-                    settlement_metadata.setdefault(
-                        "uncapped_payout", requested_payout
-                    )
+                    settlement_metadata.setdefault("uncapped_payout", requested_payout)
                     transaction = self._insert_transaction(
                         connection,
                         guild_id=guild_id,

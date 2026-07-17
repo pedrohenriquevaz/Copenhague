@@ -1,0 +1,29 @@
+{
+  "code": 0,
+  "data": {
+    "pageInfo": {
+      "nextCursor": "",
+      "hasNext": false,
+      "count": 1
+    },
+    "result": [
+      {
+        "hid": 17,
+        "tc": 8,
+        "wc": 7,
+        "bs": 844.875,
+        "mr": 6626,
+        "mrp": 0.6188,
+        "p": 1460,
+        "hid_e": {
+          "id": 17,
+          "n": "Heroina Ficticia",
+          "ix": "https://assets.example.test/hero.png",
+          "i2x": "https://assets.example.test/hero-large.png"
+        }
+      }
+    ]
+  },
+  "message": "Success",
+  "traceID": "fixture-heroes-trace"
+}

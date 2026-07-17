@@ -105,9 +105,7 @@ class EconomicDifficultyPolicyService:
         self._repository = repository
         self._tier_service = tier_service
         if not 1 <= increased_threshold_bps < SEVERE_ECONOMIC_DIFFICULTY_THRESHOLD_BPS:
-            raise ValueError(
-                "O limiar de dificuldade deve ficar entre 1 e 8999 bps."
-            )
+            raise ValueError("O limiar de dificuldade deve ficar entre 1 e 8999 bps.")
         default_increased = DAILY_PROFIT_DIFFICULTY_STEPS[1]
         self._difficulty_steps = (
             DAILY_PROFIT_DIFFICULTY_STEPS[0],

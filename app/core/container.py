@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from app.core.config import Settings
 from app.integrations import AsyncHttpClient, DiscordOrchestratedTimeoutPolicy
+from app.integrations.mlbb import MlbbClient
+from app.repositories.mlbb_repository import PostgresMlbbRepository
 from app.repositories.postgres_database import PostgresDatabase
 from app.repositories.postgres_moderation_repository import PostgresModerationRepository
 from app.repositories.postgres_repositories import (
@@ -28,6 +30,10 @@ from app.services.form_service import FormService
 from app.services.game_progress_service import GameProgressService
 from app.services.giveaway_service import GiveawayService
 from app.services.match_bet_service import MatchBetService
+from app.services.mlbb_auth_service import MlbbAuthService
+from app.services.mlbb_cache_service import MlbbCacheService
+from app.services.mlbb_profile_service import MlbbProfileService
+from app.services.mlbb_token_cipher import MlbbTokenCipher
 from app.services.moderation_service import ModerationService
 from app.services.scratch_card_service import ScratchCardService
 from app.services.shop_service import ShopService
@@ -41,6 +47,9 @@ class AppContainer:
 
     postgres_database: PostgresDatabase
     http_client: AsyncHttpClient
+    mlbb_client: MlbbClient
+    mlbb_repository: PostgresMlbbRepository
+    mlbb_token_cipher: MlbbTokenCipher
     giveaway_repository: PostgresGiveawayRepository
     bolao_repository: PostgresBolaoRepository
     match_bet_repository: PostgresMatchBetRepository
@@ -55,6 +64,9 @@ class AppContainer:
     form_service: FormService
     economy_service: EconomyService
     moderation_service: ModerationService
+    mlbb_auth_service: MlbbAuthService
+    mlbb_cache_service: MlbbCacheService
+    mlbb_profile_service: MlbbProfileService
     economic_tier_service: EconomicTierService
     economic_difficulty_policy_service: EconomicDifficultyPolicyService
     game_progress_service: GameProgressService
@@ -85,6 +97,7 @@ class AppContainer:
         giveaway_repository = PostgresGiveawayRepository(database)
         bolao_repository = PostgresBolaoRepository(database)
         form_repository = PostgresFormRepository(database)
+        mlbb_repository = PostgresMlbbRepository(database)
 
         economy_service = EconomyService(economy_repository)
         economic_tier_service = EconomicTierService()
@@ -119,12 +132,49 @@ class AppContainer:
             request_seconds=settings.HTTP_REQUEST_TIMEOUT_SECONDS,
             max_retries=settings.HTTP_MAX_RETRIES,
         )
+        http_client = AsyncHttpClient(
+            policy,
+            access_log_enabled=settings.ENABLE_NETWORK_ACCESS_LOG,
+        )
+        mlbb_client = MlbbClient(
+            http_client,
+            base_url=settings.MLBB_API_BASE_URL,
+            timeout_seconds=settings.MLBB_HTTP_TIMEOUT_SECONDS,
+            max_concurrent_requests=settings.MLBB_MAX_CONCURRENT_REQUESTS,
+            max_retries=min(settings.HTTP_MAX_RETRIES, 2),
+        )
+        mlbb_token_cipher = MlbbTokenCipher(
+            settings.MLBB_TOKEN_ENCRYPTION_KEYS if settings.MLBB_ENABLED else ()
+        )
+        mlbb_cache_service = MlbbCacheService(
+            profile_ttl_seconds=settings.MLBB_PROFILE_CACHE_TTL_SECONDS,
+            stats_ttl_seconds=settings.MLBB_STATS_CACHE_TTL_SECONDS,
+            refresh_cooldown_seconds=(settings.MLBB_PROFILE_REFRESH_COOLDOWN_SECONDS),
+        )
+        mlbb_auth_service = MlbbAuthService(
+            mlbb_repository,
+            mlbb_client,
+            mlbb_token_cipher,
+            economy_repository,
+            enabled=settings.MLBB_ENABLED,
+            auth_ttl_seconds=settings.MLBB_AUTH_TTL_SECONDS,
+            send_cooldown_seconds=settings.MLBB_SEND_VC_COOLDOWN_SECONDS,
+            max_confirm_attempts=settings.MLBB_MAX_CONFIRM_ATTEMPTS,
+            cache_invalidator=mlbb_cache_service,
+        )
+        mlbb_profile_service = MlbbProfileService(
+            mlbb_repository,
+            mlbb_client,
+            mlbb_token_cipher,
+            mlbb_cache_service,
+            enabled=settings.MLBB_ENABLED,
+        )
         return cls(
             postgres_database=database,
-            http_client=AsyncHttpClient(
-                policy,
-                access_log_enabled=settings.ENABLE_NETWORK_ACCESS_LOG,
-            ),
+            http_client=http_client,
+            mlbb_client=mlbb_client,
+            mlbb_repository=mlbb_repository,
+            mlbb_token_cipher=mlbb_token_cipher,
             giveaway_repository=giveaway_repository,
             bolao_repository=bolao_repository,
             match_bet_repository=match_bet_repository,
@@ -139,6 +189,9 @@ class AppContainer:
             form_service=FormService(form_repository),
             economy_service=economy_service,
             moderation_service=ModerationService(moderation_repository),
+            mlbb_auth_service=mlbb_auth_service,
+            mlbb_cache_service=mlbb_cache_service,
+            mlbb_profile_service=mlbb_profile_service,
             economic_tier_service=economic_tier_service,
             economic_difficulty_policy_service=economic_policy_service,
             game_progress_service=game_progress_service,

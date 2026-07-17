@@ -1,0 +1,13 @@
+{
+  "code": 0,
+  "data": {
+    "jwt": "fixture.jwt.never-real",
+    "token": "fixture-session-token-never-real",
+    "roleid": 123456789,
+    "zoneid": 1234,
+    "time": 1700000000,
+    "future_field": "ignored"
+  },
+  "msg": "ok",
+  "traceID": "fixture-login-trace"
+}

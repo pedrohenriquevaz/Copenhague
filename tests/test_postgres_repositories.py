@@ -175,9 +175,7 @@ async def test_postgres_casino_payout_idempotency_prevents_double_credit(
         )
     )
 
-    assert {result.transaction.id for result in results} == {
-        results[0].transaction.id
-    }
+    assert {result.transaction.id for result in results} == {results[0].transaction.id}
     assert sorted(result.idempotent_replay for result in results) == [False, True]
     assert (await first_repository.get_wallet(1, 10)).balance == 30_500
 
@@ -466,32 +464,27 @@ async def test_postgres_moderation_migrations_upgrade_from_applied_0009(
                     "INSERT INTO schema_migrations (version, checksum) VALUES (%s, %s)",
                     (migration.name, migration.checksum),
                 )
-            cursor.execute(
-                """
+            cursor.execute("""
                 INSERT INTO moderation_cases (
                     guild_id, action_type, target_user_id, moderator_user_id,
                     reason, duration_seconds, status, origin, metadata
                 ) VALUES (1, 'TIMEOUT', 2, 3, 'legado', 0, 'COMPLETED',
                           'COMMAND', '{}'::jsonb)
-                """
-            )
+                """)
         connection.commit()
 
         apply_migrations(connection)
 
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT action_type, duration_seconds
                 FROM moderation_cases
                 WHERE guild_id = 1
-                """
-            )
+                """)
             migrated_action, migrated_duration = cursor.fetchone()
             assert migrated_action == "MUTE"
             assert migrated_duration is None
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT BOOL_AND(constraint_data.convalidated)
                 FROM (
                     SELECT constraint_row.convalidated
@@ -504,17 +497,14 @@ async def test_postgres_moderation_migrations_upgrade_from_applied_0009(
                       AND constraint_row.conname LIKE 'moderation_%'
                       AND constraint_row.contype = 'c'
                 ) AS constraint_data
-                """
-            )
+                """)
             assert cursor.fetchone()[0] is True
             with pytest.raises(psycopg.errors.CheckViolation):
-                cursor.execute(
-                    """
+                cursor.execute("""
                     INSERT INTO moderation_cases (
                         guild_id, action_type, target_user_id, moderator_user_id,
                         reason, status, origin, metadata
                     ) VALUES (1, 'TIMEOUT', 4, 3, 'tipo antigo', 'COMPLETED',
                               'COMMAND', '{}'::jsonb)
-                    """
-                )
+                    """)
         connection.rollback()

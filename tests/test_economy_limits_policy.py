@@ -210,9 +210,7 @@ async def test_increased_threshold_is_configurable() -> None:
         increased_threshold_bps=6_500,
     )
 
-    decision = await service.select(
-        _settings(), guild_id=1, user_id=10, game="dice"
-    )
+    decision = await service.select(_settings(), guild_id=1, user_id=10, game="dice")
 
     assert decision.policy is EconomicDifficultyPolicyName.INCREASED
     assert decision.profit_ratio_bps == 6_500
@@ -284,6 +282,9 @@ async def test_settlement_delegates_economic_timezone_to_atomic_repository() -> 
         metadata={"game": "coin_flip"},
     )
 
-    assert repository.settle_casino_payout.await_args.kwargs[
-        "profit_timezone_offset_minutes"
-    ] == -180
+    assert (
+        repository.settle_casino_payout.await_args.kwargs[
+            "profit_timezone_offset_minutes"
+        ]
+        == -180
+    )

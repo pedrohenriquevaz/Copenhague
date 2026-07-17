@@ -1,0 +1,9 @@
+{
+  "code": 0,
+  "data": {
+    "name": "Jogador Sem Opcionais",
+    "roleId": 987654321,
+    "zoneId": 4321
+  },
+  "message": "Success"
+}

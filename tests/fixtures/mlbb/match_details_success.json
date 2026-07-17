@@ -1,0 +1,44 @@
+{
+  "code": 0,
+  "data": {
+    "result": [
+      {
+        "f": 1,
+        "hid": 17,
+        "rid": 123456789,
+        "zid": 1234,
+        "rname": "Jogador Ficticio",
+        "k": 14,
+        "d": 1,
+        "a": 11,
+        "tfr": 0.75,
+        "o": 85000,
+        "op": 0.33,
+        "s": 1180,
+        "mvp": 1,
+        "its": [2305, 3002, 0],
+        "its_e": [
+          {
+            "id": 2305,
+            "n": "Item Ficticio",
+            "ix": "https://assets.example.test/item.png",
+            "i2x": ""
+          },
+          null
+        ],
+        "ts": 1700000200,
+        "bd": 1200,
+        "fw": 1,
+        "hlvl": 15,
+        "hid_e": {
+          "id": 17,
+          "n": "Heroina Ficticia",
+          "ix": "https://assets.example.test/hero.png",
+          "i2x": "https://assets.example.test/hero-large.png"
+        }
+      }
+    ]
+  },
+  "message": "Success",
+  "traceID": "fixture-details-trace"
+}

@@ -173,8 +173,7 @@ class CollectiveRaceService:
                     amount=race.stake,
                     race_id=race.id,
                     idempotency_key=(
-                        "collective_race:transaction:"
-                        f"{debit.transaction.id}:refund"
+                        "collective_race:transaction:" f"{debit.transaction.id}:refund"
                     ),
                 )
                 raise CollectiveRaceValidationError(str(exc)) from exc
@@ -186,8 +185,7 @@ class CollectiveRaceService:
                     amount=race.stake,
                     race_id=race.id,
                     idempotency_key=(
-                        "collective_race:transaction:"
-                        f"{debit.transaction.id}:refund"
+                        "collective_race:transaction:" f"{debit.transaction.id}:refund"
                     ),
                 )
                 raise

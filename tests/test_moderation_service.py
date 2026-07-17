@@ -144,9 +144,7 @@ async def test_configuration_rejects_actor_from_another_guild() -> None:
     service = ModerationService(FakeModerationRepository())
 
     with pytest.raises(ModerationValidationError, match="outro servidor"):
-        await service.authorize_configuration(
-            1, principal(1, owner=True, guild_id=2)
-        )
+        await service.authorize_configuration(1, principal(1, owner=True, guild_id=2))
 
 
 async def test_configuration_is_isolated_between_guilds() -> None:
@@ -447,9 +445,7 @@ async def test_case_validation_and_duration_normalization() -> None:
     with pytest.raises(ModerationValidationError, match="objeto JSON"):
         await service.create_case(
             replace(
-                ModerationCaseCreate(
-                    1, ModerationActionType.WARN, 2, 1, "motivo"
-                ),
+                ModerationCaseCreate(1, ModerationActionType.WARN, 2, 1, "motivo"),
                 metadata=[],  # type: ignore[arg-type]
             )
         )

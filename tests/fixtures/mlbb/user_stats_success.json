@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "data": {
+    "wc": 18,
+    "tc": 30,
+    "as": 762.5,
+    "gt": 12.25,
+    "mvpc": 7,
+    "wsc": 4,
+    "hk": {
+      "v": 21,
+      "ts": 1700000100,
+      "hid": 17,
+      "sid": 40,
+      "bid": 9007199254740992,
+      "bid_s": "9007199254740993",
+      "hid_e": {
+        "id": 17,
+        "n": "Heroina Ficticia",
+        "ix": "https://assets.example.test/hero.png",
+        "i2x": "https://assets.example.test/hero-large.png"
+      }
+    },
+    "sids": [40, 39]
+  },
+  "message": "Success",
+  "traceID": "fixture-stats-trace"
+}

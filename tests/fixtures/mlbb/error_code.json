@@ -1,0 +1,6 @@
+{
+  "code": 1001,
+  "data": "",
+  "message": "invalid verification code",
+  "traceID": "fixture-error-trace"
+}

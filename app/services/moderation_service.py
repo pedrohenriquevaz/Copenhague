@@ -89,9 +89,7 @@ class ModerationService:
         duration = self._normalize_duration(case.duration)
         if case.action_type is ModerationActionType.MUTE:
             if duration is None:
-                raise ModerationValidationError(
-                    "A duracao do mute e obrigatoria."
-                )
+                raise ModerationValidationError("A duracao do mute e obrigatoria.")
         elif duration is not None:
             raise ModerationValidationError(
                 "Somente casos de mute podem possuir duracao."

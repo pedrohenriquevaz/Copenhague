@@ -65,6 +65,14 @@ class AsyncHttpClient:
             await self._session.close()
             self._session = None
 
+    async def get_session(self) -> aiohttp.ClientSession:
+        """Retorna a sessao compartilhada, abrindo-a sob demanda."""
+
+        await self.open()
+        if self._session is None:
+            raise RuntimeError("Cliente HTTP nao inicializado.")
+        return self._session
+
     async def request_json(
         self,
         method: str,
@@ -74,9 +82,7 @@ class AsyncHttpClient:
         params: Mapping[str, str | int | float] | None = None,
         json: Any = None,
     ) -> HttpResponse:
-        await self.open()
-        if self._session is None:
-            raise RuntimeError("Cliente HTTP nao inicializado.")
+        session = await self.get_session()
 
         normalized_method = method.upper()
         attempts = (
@@ -86,7 +92,7 @@ class AsyncHttpClient:
         )
         for attempt in range(attempts):
             try:
-                async with self._session.request(
+                async with session.request(
                     normalized_method,
                     url,
                     headers=headers,

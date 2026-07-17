@@ -1,0 +1,35 @@
+{
+  "code": 0,
+  "data": {
+    "pageInfo": {
+      "nextCursor": "9007199254740995",
+      "hasNext": true,
+      "count": 1
+    },
+    "result": [
+      {
+        "sid": 40,
+        "bid": 9007199254740992,
+        "bid_s": "9007199254740993",
+        "hid": 17,
+        "k": 14,
+        "d": 1,
+        "a": 11,
+        "lid": 4,
+        "s": 1180,
+        "mvp": 1,
+        "res": 1,
+        "ts": 1700000200,
+        "hid_e": {
+          "id": 17,
+          "n": "Heroina Ficticia",
+          "ix": "https://assets.example.test/hero.png",
+          "i2x": null
+        },
+        "new_field": "ignored"
+      }
+    ]
+  },
+  "message": "Success",
+  "traceID": "fixture-matches-trace"
+}

@@ -1,0 +1,16 @@
+{
+  "code": 0,
+  "data": {
+    "avatar": "https://assets.example.test/avatar.png",
+    "name": "Jogador Ficticio",
+    "level": 88,
+    "rank_level": 8000,
+    "history_rank_level": 9999,
+    "reg_country": "BR",
+    "roleId": 123456789,
+    "zoneId": 1234,
+    "unknown": {"is_ignored": true}
+  },
+  "message": "Success",
+  "traceID": "fixture-profile-trace"
+}

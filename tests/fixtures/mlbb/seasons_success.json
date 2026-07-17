@@ -1,0 +1,8 @@
+{
+  "code": 0,
+  "data": {
+    "sids": [40, 39, 38]
+  },
+  "message": "Success",
+  "traceID": "fixture-seasons-trace"
+}

@@ -452,9 +452,7 @@ class ModerationCog(commands.Cog):
                 value=self._format_duration(case.duration),
                 inline=True,
             )
-        embed.add_field(
-            name="Usuário", value=f"{member} (`{member.id}`)", inline=False
-        )
+        embed.add_field(name="Usuário", value=f"{member} (`{member.id}`)", inline=False)
         embed.add_field(name="Moderador", value=f"`{case.moderator_user_id}`")
         embed.add_field(name="Motivo", value=case.reason, inline=False)
         try:
